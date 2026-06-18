@@ -41,6 +41,50 @@
       </div>
     </div>
   </div>
+
+  <div id="start-screen" class="overlay" style="display:flex;">
+    <div style="position:absolute;inset:0;background:linear-gradient(135deg,#1a3a1a,#2d5a2d);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;">
+      <h1 style="margin-bottom:32px;font-size:32px;">新手司机道路考核</h1>
+      <div id="ss-levels" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;max-width:560px;"></div>
+      <div id="ss-errors"></div>
+    </div>
+  </div>
+
+  <div id="level-complete" class="overlay" style="display:none;">
+    <div style="position:absolute;inset:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;">
+      <div style="background:#fff;color:#222;padding:32px;border-radius:10px;text-align:center;min-width:320px;">
+        <h2 style="color:#2d5a2d;margin-bottom:16px;">关卡通过 ✓</h2>
+        <p style="font-size:14px;margin-bottom:8px;">得分：<span id="lc-score" style="font-weight:bold;font-size:20px;"></span></p>
+        <div style="margin-top:20px;display:flex;gap:8px;justify-content:center;">
+          <button data-lc-action="replay" style="padding:8px 16px;border:none;background:#eee;border-radius:6px;cursor:pointer;">重玩</button>
+          <button data-lc-action="next" id="lc-next" style="padding:8px 16px;border:none;background:#2d5a2d;color:#fff;border-radius:6px;cursor:pointer;">下一关</button>
+          <button data-lc-action="menu" style="padding:8px 16px;border:none;background:#eee;border-radius:6px;cursor:pointer;">回菜单</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="level-fail" class="overlay" style="display:none;">
+    <div style="position:absolute;inset:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;">
+      <div style="background:#fff;color:#222;padding:32px;border-radius:10px;text-align:center;min-width:320px;">
+        <h2 style="color:#c33;margin-bottom:16px;">未达标</h2>
+        <p style="font-size:14px;">得分：<span id="lf-score" style="font-weight:bold;font-size:20px;"></span> · 通过线 <span id="lf-pass"></span></p>
+        <div style="margin-top:20px;display:flex;gap:8px;justify-content:center;">
+          <button data-lf-action="retry" style="padding:8px 16px;border:none;background:#2d5a2d;color:#fff;border-radius:6px;cursor:pointer;">重试</button>
+          <button data-lf-action="menu" style="padding:8px 16px;border:none;background:#eee;border-radius:6px;cursor:pointer;">回菜单</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="touch-buttons" class="overlay" style="display:none;">
+    <div style="position:absolute;bottom:12px;left:50%;transform:translateX(-50%);display:flex;gap:8px;">
+      <button data-touch="stop" style="width:54px;height:54px;border-radius:50%;border:none;background:rgba(0,0,0,0.7);color:#fff;font-size:12px;">停/行</button>
+      <button data-touch="pass-through" style="width:54px;height:54px;border-radius:50%;border:none;background:rgba(0,0,0,0.7);color:#fff;font-size:20px;">↑</button>
+      <button data-touch="left-turn" style="width:54px;height:54px;border-radius:50%;border:none;background:rgba(0,0,0,0.7);color:#fff;font-size:20px;">←</button>
+      <button data-touch="right-turn" style="width:54px;height:54px;border-radius:50%;border:none;background:rgba(0,0,0,0.7);color:#fff;font-size:20px;">→</button>
+    </div>
+  </div>
 </div>
 <script>
 (function(){
@@ -437,10 +481,10 @@
     state.car.stopped = false;
   }
   function checkLevelComplete(){
-    // 简化：车到达屏幕顶部视为完成
     if (state.car.y < 50) {
       const pass = checkPass(state.score, currentLevel.passScore);
-      transition(pass ? 'level-complete' : 'level-failed');
+      if (pass) { state.mode = 'level-complete'; showLevelComplete(); }
+      else { state.mode = 'level-failed'; showLevelFail(); }
     }
   }
   const dpEl = document.getElementById('decision-prompt');
@@ -478,6 +522,85 @@
     const action = map[e.code];
     if (action) { e.preventDefault(); handleAction(action); }
   });
+
+  // ===== START SCREEN / LEVEL COMPLETE / LEVEL FAIL / TOUCH =====
+  const startScreen = document.getElementById('start-screen');
+  function renderStartScreen(){
+    const container = document.getElementById('ss-levels');
+    container.innerHTML = '';
+    LEVELS.forEach(function(lv, idx){
+      const unlocked = idx < state.unlockedLevels;
+      const btn = document.createElement('button');
+      btn.textContent = lv.title.split('·')[0].trim();
+      btn.style.cssText = 'padding:12px 8px;border-radius:8px;border:none;cursor:'+(unlocked?'pointer':'not-allowed')+';background:'+(unlocked?'#fff':'#555')+';color:'+(unlocked?'#222':'#999')+';font-size:13px;';
+      btn.disabled = !unlocked;
+      btn.addEventListener('click', function(){
+        state.levelIdx = idx;
+        transition('playing');
+        hideAllOverlays();
+      });
+      container.appendChild(btn);
+    });
+  }
+  function hideAllOverlays(){
+    startScreen.style.display = 'none';
+    document.getElementById('level-complete').style.display = 'none';
+    document.getElementById('level-fail').style.display = 'none';
+    hudEl.style.display = 'none';
+    dpEl.style.display = 'none';
+  }
+  function showStartScreen(){
+    hideAllOverlays();
+    renderStartScreen();
+    startScreen.style.display = 'flex';
+  }
+  function saveProgress(){ /* Task 23 实现 */ }
+  // 启动时显示
+  showStartScreen();
+
+  function showLevelComplete(){
+    document.getElementById('lc-score').textContent = state.score;
+    const isLast = state.levelIdx >= LEVELS.length - 1;
+    document.getElementById('lc-next').style.display = isLast ? 'none' : 'block';
+    document.getElementById('level-complete').style.display = 'block';
+    if (state.levelIdx + 1 >= state.unlockedLevels && !isLast) {
+      state.unlockedLevels = state.levelIdx + 2;
+      saveProgress();
+    }
+  }
+  function showLevelFail(){
+    document.getElementById('lf-score').textContent = state.score;
+    document.getElementById('lf-pass').textContent = currentLevel.passScore;
+    document.getElementById('level-fail').style.display = 'block';
+  }
+  document.querySelectorAll('[data-lc-action]').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      const a = btn.getAttribute('data-lc-action');
+      if (a === 'replay') transition('playing');
+      else if (a === 'next') { state.levelIdx++; transition('playing'); }
+      else if (a === 'menu') { state.mode = 'menu'; showStartScreen(); }
+      document.getElementById('level-complete').style.display = 'none';
+    });
+  });
+  document.querySelectorAll('[data-lf-action]').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      const a = btn.getAttribute('data-lf-action');
+      if (a === 'retry') transition('playing');
+      else if (a === 'menu') { state.mode = 'menu'; showStartScreen(); }
+      document.getElementById('level-fail').style.display = 'none';
+    });
+  });
+
+  function setupTouch(){
+    const isTouch = navigator.maxTouchPoints > 0 && !window.matchMedia('(pointer:fine)').matches;
+    document.getElementById('touch-buttons').style.display = isTouch ? 'block' : 'none';
+    document.querySelectorAll('[data-touch]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        handleAction(btn.getAttribute('data-touch'));
+      });
+    });
+  }
+  setupTouch();
 
   // ===== EXPOSE =====
   window.game = { state, transition };
