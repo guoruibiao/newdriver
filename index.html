@@ -77,6 +77,48 @@
       ctx.setLineDash([]);
     }
   }
+  function drawLights(signals, signalStates){
+    if (!signals) return;
+    signals.forEach(function(sig){
+      const st = signalStates[sig.id] || 'red';
+      const x = sig.pos.x, y = sig.pos.y;
+      if (sig.type === 'circle') {
+        // 圆饼灯外壳
+        ctx.fillStyle = '#222';
+        ctx.fillRect(x - 14, y - 38, 28, 76);
+        // 三个圆
+        [['red','#c33',-22],['yellow','#cc0',0],['green','#3c3',22]].forEach(function(p){
+          ctx.beginPath();
+          ctx.fillStyle = (st === p[0]) ? p[1] : '#444';
+          ctx.arc(x, y + p[2], 9, 0, Math.PI*2);
+          ctx.fill();
+        });
+      } else if (sig.type === 'arrow') {
+        // 箭头灯：三个方向独立显示
+        ctx.fillStyle = '#222';
+        ctx.fillRect(x - 18, y - 30, 36, 60);
+        ['left','forward','right'].forEach(function(dir, i){
+          const ay = y - 20 + i * 20;
+          const isOn = (st === dir + '-green') || (st === dir + '-red' && false);
+          const color = st.startsWith(dir + '-green') ? '#3c3' : '#5a1a1a';
+          drawArrow(x, ay, dir, color);
+        });
+      }
+    });
+  }
+  function drawArrow(cx, cy, dir, color){
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    if (dir === 'forward') {
+      ctx.moveTo(cx, cy - 8); ctx.lineTo(cx + 5, cy + 4); ctx.lineTo(cx - 5, cy + 4);
+    } else if (dir === 'left') {
+      ctx.moveTo(cx - 8, cy); ctx.lineTo(cx + 4, cy - 5); ctx.lineTo(cx + 4, cy + 5);
+    } else if (dir === 'right') {
+      ctx.moveTo(cx + 8, cy); ctx.lineTo(cx - 4, cy - 5); ctx.lineTo(cx - 4, cy + 5);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
 
   // ===== LOOP =====
   let lastT = 0;
@@ -92,6 +134,7 @@
   }
   function render(){
     drawRoad(currentLevel && currentLevel.road);
+    drawLights(currentLevel && currentLevel.signals, state.signalStates);
     ctx.fillStyle = '#fff';
     ctx.font = '16px sans-serif';
     ctx.fillText('mode = ' + state.mode, 20, 30);
