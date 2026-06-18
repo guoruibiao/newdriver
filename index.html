@@ -215,8 +215,37 @@
         }
       }],
       completion: { intersections: 1 }
+    },
+    {
+      id: 'L3',
+      title: '第 3 关 · 圆饼红灯左转/直行禁止',
+      intro: '前方圆饼红灯。直行、左转均禁止，必须停车等待。',
+      passScore: 80,
+      road: {
+        lanes: [{ x: 400, w: 80 }],
+        centerLine: { x: 400 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+      },
+      signals: [
+        { id: 'sig-n', type: 'circle', pos: { x: 340, y: 240 },
+          program: [{ state: 'red', duration: 99999 }] }
+      ],
+      signs: [],
+      decisionPoints: [{
+        id: 'dp-1', atIntersection: 'int-1',
+        trigger: { x: 400, y: 380, radius: 50 },
+        prompt: '圆饼红灯。直行 / 左转 / 右转 / 停车，你选哪个？',
+        evaluate: {
+          'pass-through': { correct: false, deduct: 30, explanationKey: 'red-light-stop' },
+          'left-turn':    { correct: false, deduct: 30, explanationKey: 'red-light-no-left' },
+          'right-turn':   { correct: true,  deduct: 0,  explanationKey: 'circle-red-right-allowed' },
+          'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
+        }
+      }],
+      completion: { intersections: 1 }
     }
-    // L3~L8 在后续 task 添加
+    // L4~L8 在后续 task 添加
   ];
 
   // ===== LEVEL LOADER =====
