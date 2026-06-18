@@ -24,6 +24,7 @@
   const ctx = canvas.getContext('2d');
 
   // ===== STATE =====
+  let currentLevel = null;
   const VALID_MODES = ['menu','playing','awaiting-decision','explaining','paused','level-complete','level-failed'];
   const state = {
     mode: 'menu',
@@ -42,6 +43,41 @@
     state.mode = newMode;
   }
 
+  // ===== RENDER =====
+  function drawRoad(road){
+    // 背景
+    ctx.fillStyle = '#2d5a2d';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (!road) return;
+    // 主路：垂直方向
+    road.lanes.forEach(function(lane){
+      ctx.fillStyle = '#3a3a3a';
+      ctx.fillRect(lane.x - lane.w/2, 0, lane.w, canvas.height);
+    });
+    // 路口处的横向道路
+    if (road.intersections) {
+      road.intersections.forEach(function(it){
+        ctx.fillStyle = '#3a3a3a';
+        ctx.fillRect(0, it.center.y - road.crossHalfWidth, canvas.width, road.crossHalfWidth * 2);
+        // 停止线（白色实线）
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(it.center.x - road.crossHalfWidth, it.center.y - road.crossHalfWidth - 3, road.crossHalfWidth * 2, 3);
+        ctx.fillRect(it.center.x - road.crossHalfWidth, it.center.y + road.crossHalfWidth, road.crossHalfWidth * 2, 3);
+      });
+    }
+    // 中线（黄色虚线）
+    if (road.centerLine) {
+      ctx.strokeStyle = '#ffd700';
+      ctx.setLineDash([20, 15]);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(road.centerLine.x, 0);
+      ctx.lineTo(road.centerLine.x, canvas.height);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
   // ===== LOOP =====
   let lastT = 0;
   function loop(t){
@@ -55,8 +91,7 @@
     // 各模式 update 逻辑后续 task 填充
   }
   function render(){
-    ctx.fillStyle = '#2d5a2d';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    drawRoad(currentLevel && currentLevel.road);
     ctx.fillStyle = '#fff';
     ctx.font = '16px sans-serif';
     ctx.fillText('mode = ' + state.mode, 20, 30);
