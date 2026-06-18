@@ -117,6 +117,24 @@
       correct: '等信号明确或确认安全后再行动。',
       rule: '防御性驾驶原则'
     },
+    'circle-red-right-allowed': {
+      title: '圆饼红灯允许右转',
+      why: '圆饼红灯时，如果没有"红灯禁止右转"辅助标志，右转车辆在确认安全、让行人和被放行车辆后可以通行。',
+      correct: '减速、观察右侧、让行人，安全后右转。',
+      rule: '《道交法实施条例》第 38 条'
+    },
+    'red-light-no-left': {
+      title: '红灯禁止左转',
+      why: '圆饼红灯时，左转和直行都必须停在停止线后。',
+      correct: '停车等待绿灯。',
+      rule: '《道交法实施条例》第 38 条'
+    },
+    'red-light-no-right-sign': {
+      title: '红灯禁右标志下不得右转',
+      why: '路口设有"红灯禁止右转"辅助标志时，红灯期间禁止右转。',
+      correct: '停车等待绿灯。',
+      rule: 'GB 5768 道路交通标志'
+    },
     'unknown-action': {
       title: '未识别的操作',
       why: '系统未识别该动作。',
@@ -167,8 +185,38 @@
         }
       ],
       completion: { intersections: 1 }
+    },
+    {
+      id: 'L2',
+      title: '第 2 关 · 圆饼红灯能否右转',
+      intro: '前方圆饼红灯，无禁右标志。你的车道允许直行或右转。',
+      passScore: 80,
+      road: {
+        lanes: [{ x: 400, w: 80 }],
+        centerLine: { x: 400 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+      },
+      signals: [
+        { id: 'sig-n', type: 'circle', pos: { x: 340, y: 240 },
+          program: [{ state: 'red', duration: 99999 }] }
+      ],
+      signs: [],
+      decisionPoints: [{
+        id: 'dp-1',
+        atIntersection: 'int-1',
+        trigger: { x: 400, y: 380, radius: 50 },
+        prompt: '圆饼红灯，无禁右标志。可以右转吗？',
+        evaluate: {
+          'pass-through': { correct: false, deduct: 30, explanationKey: 'red-light-stop' },
+          'right-turn':   { correct: true,  deduct: 0,  explanationKey: 'circle-red-right-allowed' },
+          'left-turn':    { correct: false, deduct: 30, explanationKey: 'red-light-no-left' },
+          'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
+        }
+      }],
+      completion: { intersections: 1 }
     }
-    // L2~L8 在后续 task 添加
+    // L3~L8 在后续 task 添加
   ];
 
   // ===== LEVEL LOADER =====
