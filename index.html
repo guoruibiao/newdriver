@@ -24,6 +24,23 @@
     </div>
     <button id="hud-pause" style="position:absolute;top:12px;right:12px;background:rgba(0,0,0,0.7);color:#fff;border:none;padding:8px 14px;border-radius:6px;font-size:14px;cursor:pointer;">暂停 (Esc)</button>
   </div>
+  <div id="decision-prompt" class="overlay" style="display:none;">
+    <div style="position:absolute;bottom:60px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.85);color:#fff;padding:12px 20px;border-radius:8px;text-align:center;max-width:80%;">
+      <div id="dp-text" style="font-size:15px;margin-bottom:8px;"></div>
+      <div style="font-size:12px;opacity:0.8;">Space 停/行 · ↑ 直行 · ← 左转 · → 右转</div>
+    </div>
+  </div>
+  <div id="explain-modal" class="overlay" style="display:none;">
+    <div style="position:absolute;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;">
+      <div style="background:#fff;color:#222;padding:24px;border-radius:10px;max-width:480px;width:90%;">
+        <h3 id="em-title" style="margin-bottom:12px;"></h3>
+        <p style="margin-bottom:8px;"><strong>为什么错：</strong><span id="em-why"></span></p>
+        <p style="margin-bottom:8px;"><strong>正确做法：</strong><span id="em-correct"></span></p>
+        <p style="margin-bottom:16px;font-size:13px;color:#666;"><span id="em-rule"></span></p>
+        <button id="em-close" style="background:#2d5a2d;color:#fff;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;">继续</button>
+      </div>
+    </div>
+  </div>
 </div>
 <script>
 (function(){
@@ -429,19 +446,31 @@
       transition(pass ? 'level-complete' : 'level-failed');
     }
   }
-  function showExplanation(key){
-    // UI 在 Task 13 实现
-    console.log('[Explain]', key, window.game.__test.EXPLANATIONS[key]);
-    if (state._explainTimer) clearTimeout(state._explainTimer);
-    // 临时：3 秒后自动关闭
-    state._explainTimer = setTimeout(function(){
-      state._explainTimer = null;
-      transition('playing');
-      proceedThrough('pass-through');
-      state.currentDecisionPoint = null;
-      checkLevelComplete();
-    }, 3000);
+  const dpEl = document.getElementById('decision-prompt');
+  const dpText = document.getElementById('dp-text');
+  function showDecisionPrompt(dp){
+    dpText.textContent = dp.prompt;
+    dpEl.style.display = 'block';
   }
+  function hideDecisionPrompt(){ dpEl.style.display = 'none'; }
+
+  const emEl = document.getElementById('explain-modal');
+  function showExplanation(key){
+    const ex = EXPLANATIONS[key] || EXPLANATIONS['unknown-action'];
+    document.getElementById('em-title').textContent = ex.title;
+    document.getElementById('em-why').textContent = ex.why;
+    document.getElementById('em-correct').textContent = ex.correct;
+    document.getElementById('em-rule').textContent = ex.rule;
+    emEl.style.display = 'block';
+  }
+  document.getElementById('em-close').addEventListener('click', function(){
+    emEl.style.display = 'none';
+    proceedThrough('pass-through');
+    state.currentDecisionPoint = null;
+    hideDecisionPrompt();
+    transition('playing');
+    checkLevelComplete();
+  });
 
   document.addEventListener('keydown', function(e){
     if (e.code === 'Escape') {
