@@ -291,8 +291,40 @@
         }
       }],
       completion: { intersections: 1 }
+    },
+    {
+      id: 'L5',
+      title: '第 5 关 · 右转箭头红灯（老司机陷阱）',
+      intro: '右转箭头为红时，右转也必须停。很多人误以为"右转永远可以"。',
+      passScore: 80,
+      road: {
+        lanes: [{ x: 400, w: 80 }],
+        centerLine: { x: 400 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+      },
+      signals: [
+        { id: 'sig-arrow', type: 'arrow', pos: { x: 340, y: 240 },
+          program: [
+            { state: 'right-red', duration: 99999 }
+          ] }
+      ],
+      signs: [],
+      decisionPoints: [{
+        id: 'dp-1', atIntersection: 'int-1',
+        signalBindings: ['sig-arrow'],
+        trigger: { x: 400, y: 380, radius: 50 },
+        prompt: '右转箭头红灯。可以右转吗？',
+        evaluate: {
+          'pass-through': { correct: false, deduct: 30, explanationKey: 'arrow-red-stop' },
+          'right-turn':   { _dynamic: 'arrowRightBySignal', deduct: 30, explanationKey: 'arrow-red-stop' },
+          'left-turn':    { correct: false, deduct: 30, explanationKey: 'arrow-red-stop' },
+          'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
+        }
+      }],
+      completion: { intersections: 1 }
     }
-    // L5~L8 在后续 task 添加
+    // L6~L8 在后续 task 添加
   ];
 
   // ===== LEVEL LOADER =====
@@ -365,6 +397,13 @@
       const sigState = sigId ? signalStates[sigId] : null;
       if (!sigState) return { correct: false, deduct: SCORE_CONFIG.deductBySeverity.normal, explanationKey: 'signal-missing' };
       const ok = (sigState === 'left-green');
+      return { correct: ok, deduct: ok ? 0 : rule.deduct, explanationKey: ok ? 'arrow-green-go' : rule.explanationKey };
+    }
+    if (rule._dynamic === 'arrowRightBySignal') {
+      const sigId = dp.signalBindings && dp.signalBindings[0];
+      const sigState = sigId ? signalStates[sigId] : null;
+      if (!sigState) return { correct: false, deduct: SCORE_CONFIG.deductBySeverity.normal, explanationKey: 'signal-missing' };
+      const ok = (sigState === 'right-green');
       return { correct: ok, deduct: ok ? 0 : rule.deduct, explanationKey: ok ? 'arrow-green-go' : rule.explanationKey };
     }
     // 3. 静态规则
@@ -454,14 +493,17 @@
           ctx.fill();
         });
       } else if (sig.type === 'arrow') {
-        // 箭头灯：三个方向独立显示
         ctx.fillStyle = '#222';
         ctx.fillRect(x - 18, y - 30, 36, 60);
-        ['left','forward','right'].forEach(function(dir, i){
+        const ast = signalStates[sig.id] || 'all-red';
+        [['left','left-green'],['forward','forward-green'],['right','right-green']].forEach(function(arr, i){
+          const drawDir = arr[0];
+          const matchOn = arr[1];
           const ay = y - 20 + i * 20;
-          const isOn = (st === dir + '-green') || (st === dir + '-red' && false);
-          const color = st.startsWith(dir + '-green') ? '#3c3' : '#5a1a1a';
-          drawArrow(x, ay, dir, color);
+          const isOn = ast === matchOn;
+          const isAnyRed = ast === 'all-red' || ast === 'left-red' || ast === 'forward-red' || ast === 'right-red';
+          const color = isOn ? '#3c3' : (isAnyRed ? '#5a1a1a' : '#444');
+          drawArrow(x, ay, drawDir, color);
         });
       }
     });
