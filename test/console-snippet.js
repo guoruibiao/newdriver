@@ -19,6 +19,10 @@
   assert(r.deduct === 0, 'L1 绿灯 pass-through 不扣分');
   assert(r.explanationKey === 'green-light-go', 'explanationKey 应为 green-light-go');
 
+  // L1: 黄灯时直行 -> 对（已过线情况下）
+  r = t.evaluateDecision(dp, 'pass-through', { 'sig-n': 'yellow' });
+  assert(r.correct === true && r.explanationKey === 'green-light-go', 'L1 黄灯 pass-through 应判对');
+
   // L1: 任何时候停车 -> 对
   r = t.evaluateDecision(dp, 'stop', sigState);
   assert(r.correct === true && r.deduct === 0, 'L1 stop 永远正确');

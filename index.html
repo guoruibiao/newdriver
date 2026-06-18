@@ -86,6 +86,7 @@
         {
           id: 'dp-1',
           atIntersection: 'int-1',
+          signalBindings: ['sig-n'],
           trigger: { x: 400, y: 380, radius: 50 },
           prompt: '观察信号灯，决定通过还是停车',
           evaluate: {
@@ -147,10 +148,11 @@
     const rule = dp.evaluate[action];
     // 2. 动态规则（如根据信号灯状态判定）
     if (rule._dynamic === 'passThroughBySignal') {
-      const sigId = (dp.signalBindings && dp.signalBindings[0]) || (currentLevel && currentLevel.signals[0] && currentLevel.signals[0].id);
+      // 信号绑定由 dp 显式声明（pure function：不依赖外部 currentLevel）
+      const sigId = dp.signalBindings && dp.signalBindings[0];
       const sigState = sigId ? signalStates[sigId] : null;
       if (!sigState) {
-        return { correct: false, deduct: 20, explanationKey: 'signal-missing' };
+        return { correct: false, deduct: SCORE_CONFIG.deductBySeverity.normal, explanationKey: 'signal-missing' };
       }
       if (sigState === 'green' || sigState === 'yellow') {
         return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
