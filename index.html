@@ -164,6 +164,13 @@
     return { correct: rule.correct, deduct: rule.deduct || 0, explanationKey: rule.explanationKey };
   }
 
+  function applyDeduct(deduct){
+    state.score = Math.max(0, state.score - deduct);
+  }
+  function checkPass(score, passScore){
+    return score >= passScore;
+  }
+
   // ===== STATE =====
   let currentLevel = null;
   const VALID_MODES = ['menu','playing','awaiting-decision','explaining','paused','level-complete','level-failed'];
@@ -301,7 +308,7 @@
 
   // ===== EXPOSE =====
   window.game = { state, transition };
-  window.game.__test = { levels: LEVELS, validateLevel, loadLevel, evaluateDecision };
+  window.game.__test = { levels: LEVELS, validateLevel, loadLevel, evaluateDecision, applyDeduct, checkPass };
 
   requestAnimationFrame(loop);
 })();
