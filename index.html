@@ -409,8 +409,55 @@
         }
       }],
       completion: { intersections: 1 }
+    },
+    {
+      id: 'L8',
+      title: '第 8 关 · 综合考核',
+      intro: '多个路口，混合所有信号灯类型。小心应对。',
+      passScore: 80,
+      road: {
+        lanes: [{ x: 400, w: 80 }],
+        centerLine: { x: 400 },
+        crossHalfWidth: 60,
+        intersections: [
+          { id: 'int-1', center: { x: 400, y: 450 }, roads: ['n','s'] },
+          { id: 'int-2', center: { x: 400, y: 250 }, roads: ['n','s','e','w'] }
+        ]
+      },
+      signals: [
+        { id: 'sig-1', type: 'circle', pos: { x: 340, y: 390 },
+          program: [{ state: 'green', duration: 99999 }] },
+        { id: 'sig-2', type: 'arrow', pos: { x: 340, y: 190 },
+          program: [{ state: 'right-red', duration: 99999 }] }
+      ],
+      signs: [],
+      decisionPoints: [
+        {
+          id: 'dp-1', atIntersection: 'int-1',
+          trigger: { x: 400, y: 530, radius: 50 },
+          prompt: '路口 1：绿灯。可以直行。',
+          evaluate: {
+            'pass-through': { correct: true,  deduct: 0,  explanationKey: 'green-light-go' },
+            'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' },
+            'left-turn':    { correct: false, deduct: 30, explanationKey: 'unknown-action' },
+            'right-turn':   { correct: false, deduct: 0,  explanationKey: 'unknown-action' }
+          }
+        },
+        {
+          id: 'dp-2', atIntersection: 'int-2',
+          signalBindings: ['sig-2'],
+          trigger: { x: 400, y: 330, radius: 50 },
+          prompt: '路口 2：右转箭头红。能右转吗？',
+          evaluate: {
+            'pass-through': { correct: true,  deduct: 0,  explanationKey: 'arrow-green-go' },
+            'right-turn':   { _dynamic: 'arrowRightBySignal', deduct: 30, explanationKey: 'arrow-red-stop' },
+            'left-turn':    { correct: false, deduct: 30, explanationKey: 'arrow-red-stop' },
+            'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
+          }
+        }
+      ],
+      completion: { intersections: 2 }
     }
-    // L8 在后续 task 添加
   ];
 
   // ===== LEVEL LOADER =====
@@ -641,6 +688,7 @@
     state.car = { x: startLane.x, y: canvas.height - 60, heading: 0, speed: 80, stopped: false };
     state.score = SCORE_CONFIG.initial;
     state.currentDecisionPoint = null;
+    state.intersectionsCleared = 0;
     // 初始化信号灯状态
     state.signalStates = {};
     state.signalStart = performance.now();
@@ -743,11 +791,15 @@
   }
   function proceedThrough(action){
     // 简化：让车继续向北，离开决策区
-    state.car.y -= 80;
+    state.car.y -= 120;
     state.car.stopped = false;
   }
   function checkLevelComplete(){
+    const target = currentLevel.completion.intersections || 1;
+    state.intersectionsCleared = state.intersectionsCleared || 0;
     if (state.car.y < 50) {
+      const dpsResolved = currentLevel.decisionPoints.length;
+      state.intersectionsCleared = dpsResolved;
       const pass = checkPass(state.score, currentLevel.passScore);
       if (pass) { state.mode = 'level-complete'; showLevelComplete(); }
       else { state.mode = 'level-failed'; showLevelFail(); }
