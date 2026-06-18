@@ -574,6 +574,20 @@
     }
     state.mode = newMode;
   }
+  function saveProgress(){
+    try { localStorage.setItem('driving-game-progress', JSON.stringify({ unlockedLevels: state.unlockedLevels })); }
+    catch(e){ console.warn('saveProgress failed', e); }
+  }
+  function loadProgress(){
+    try {
+      const raw = localStorage.getItem('driving-game-progress');
+      if (raw) {
+        const obj = JSON.parse(raw);
+        if (typeof obj.unlockedLevels === 'number') state.unlockedLevels = obj.unlockedLevels;
+      }
+    } catch(e){ console.warn('loadProgress failed', e); }
+  }
+  loadProgress();
 
   // ===== RENDER =====
   function drawRoad(road){
@@ -872,7 +886,6 @@
     renderStartScreen();
     startScreen.style.display = 'flex';
   }
-  function saveProgress(){ /* Task 23 实现 */ }
   // 启动时显示
   showStartScreen();
 
