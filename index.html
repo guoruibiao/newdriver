@@ -386,7 +386,7 @@
       applyDeduct(result.deduct);
       transition('explaining');
       showExplanation(result.explanationKey);
-      // mode 切换由讲解弹窗关闭时处理
+      // 讲解关闭后由 showExplanation 内的回调切回 playing
     } else {
       // 正确决策：车通过路口
       proceedThrough(action);
