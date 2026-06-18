@@ -23,6 +23,121 @@
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
 
+  // ===== DATA =====
+  const SCORE_CONFIG = {
+    initial: 100,
+    deductBySeverity: { minor: 10, normal: 20, major: 30, critical: 50 }
+  };
+
+  const EXPLANATIONS = {
+    'red-light-stop': {
+      title: '闯红灯',
+      why: '圆饼红灯亮时，直行和左转必须停在停止线后等待。',
+      correct: '红灯时停车等待，绿灯亮后再通行。',
+      rule: '《道路交通安全法》第 26 条'
+    },
+    'green-light-go': {
+      title: '绿灯通行',
+      why: '绿灯亮时，确认安全后可以通行。',
+      correct: '观察左右后通过。',
+      rule: '《道路交通安全法》第 26 条'
+    },
+    'safe-stop': {
+      title: '安全停车',
+      why: '不确定时停车等待是最稳妥的选择。',
+      correct: '等信号明确或确认安全后再行动。',
+      rule: '防御性驾驶原则'
+    },
+    'unknown-action': {
+      title: '未识别的操作',
+      why: '系统未识别该动作。',
+      correct: '使用 Space / 方向键操作。',
+      rule: '——'
+    },
+    'signal-missing': {
+      title: '信号灯故障',
+      why: '路口信号灯未工作。',
+      correct: '减速观察，确认安全后通过，必要时停车。',
+      rule: '《道交法实施条例》第 52 条'
+    }
+    // 其余 explanation key 在 Task 16-22 添加关卡时按需补充
+  };
+
+  const LEVELS = [
+    {
+      id: 'L1',
+      title: '第 1 关 · 入门：绿灯行红灯停',
+      intro: '前方圆饼信号灯。红灯停，绿灯行。',
+      passScore: 80,
+      road: {
+        lanes: [{ x: 400, w: 80 }],
+        centerLine: { x: 400 },
+        crossHalfWidth: 60,
+        intersections: [
+          { id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s'] }
+        ]
+      },
+      signals: [
+        { id: 'sig-n', type: 'circle', pos: { x: 340, y: 240 },
+          program: [{ state: 'green', duration: 5000 }, { state: 'yellow', duration: 1000 }, { state: 'red', duration: 5000 }] }
+      ],
+      signs: [],
+      decisionPoints: [
+        {
+          id: 'dp-1',
+          atIntersection: 'int-1',
+          trigger: { x: 400, y: 380, radius: 50 },
+          prompt: '观察信号灯，决定通过还是停车',
+          evaluate: {
+            'pass-through': { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
+            'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' },
+            'left-turn':    { correct: false, deduct: 0,  explanationKey: 'unknown-action' },
+            'right-turn':   { correct: false, deduct: 0,  explanationKey: 'unknown-action' }
+          }
+        }
+      ],
+      completion: { intersections: 1 }
+    }
+    // L2~L8 在后续 task 添加
+  ];
+
+  // ===== LEVEL LOADER =====
+  function loadLevel(idx){
+    const lv = LEVELS[idx];
+    if (!lv) return null;
+    const errs = validateLevel(lv);
+    if (errs.length > 0) {
+      console.error('Level data invalid:', lv.id, errs);
+      showDataErrorBanner(lv.id, errs);
+      return null;
+    }
+    return lv;
+  }
+  function validateLevel(lv){
+    const errs = [];
+    ['id','title','passScore','road','signals','decisionPoints'].forEach(function(k){
+      if (!lv[k]) errs.push('missing ' + k);
+    });
+    if (lv.passScore && (lv.passScore < 0 || lv.passScore > 100)) errs.push('passScore out of range');
+    if (lv.decisionPoints) {
+      lv.decisionPoints.forEach(function(dp, i){
+        if (!dp.evaluate) errs.push('dp['+i+'] missing evaluate');
+        else if (!dp.evaluate['pass-through']) errs.push('dp['+i+'] missing pass-through rule');
+        Object.keys(dp.evaluate).forEach(function(act){
+          const r = dp.evaluate[act];
+          if (!r._dynamic && !EXPLANATIONS[r.explanationKey]) errs.push('dp['+i+'].'+act+' unknown explanationKey: '+r.explanationKey);
+        });
+      });
+    }
+    return errs;
+  }
+  function showDataErrorBanner(id, errs){
+    const div = document.createElement('div');
+    div.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#c33;color:#fff;padding:8px;font-size:13px;z-index:9999;';
+    div.textContent = '[关卡数据异常] ' + id + ': ' + errs.join('; ');
+    document.body.appendChild(div);
+  }
+
   // ===== STATE =====
   let currentLevel = null;
   const VALID_MODES = ['menu','playing','awaiting-decision','explaining','paused','level-complete','level-failed'];
@@ -160,6 +275,7 @@
 
   // ===== EXPOSE =====
   window.game = { state, transition };
+  window.game.__test = { levels: LEVELS, validateLevel, loadLevel };
 
   requestAnimationFrame(loop);
 })();
