@@ -370,6 +370,7 @@
 
   // ===== INPUT =====
   function handleAction(action){
+    if (state.mode === 'explaining') return;
     if (state.mode === 'awaiting-decision') {
       decide(action);
     } else if (state.mode === 'playing') {
@@ -383,6 +384,7 @@
     const result = evaluateDecision(dp, action, state.signalStates);
     if (result.deduct > 0) {
       applyDeduct(result.deduct);
+      transition('explaining');
       showExplanation(result.explanationKey);
       // mode 切换由讲解弹窗关闭时处理
     } else {
@@ -408,8 +410,10 @@
   function showExplanation(key){
     // UI 在 Task 13 实现
     console.log('[Explain]', key, window.game.__test.EXPLANATIONS[key]);
+    if (state._explainTimer) clearTimeout(state._explainTimer);
     // 临时：3 秒后自动关闭
-    setTimeout(function(){
+    state._explainTimer = setTimeout(function(){
+      state._explainTimer = null;
       transition('playing');
       proceedThrough('pass-through');
       state.currentDecisionPoint = null;
