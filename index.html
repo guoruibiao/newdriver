@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>新手司机道路考核</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; font-family: -apple-system, "PingFang SC", sans-serif; background: #1a1a1a; color: #fff; overflow: hidden; }
+  #app { position: relative; width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
+  #game { background: #2d5a2d; display: block; max-width: 100%; max-height: 100%; }
+  .overlay { position: absolute; inset: 0; pointer-events: none; }
+  .overlay > * { pointer-events: auto; }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="game" width="800" height="600"></canvas>
+</div>
+<script>
+(function(){
+  'use strict';
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  let lastT = 0;
+  function loop(t){
+    const dt = Math.min(100, t - lastT || 16);
+    lastT = t;
+    ctx.fillStyle = '#2d5a2d';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#fff';
+    ctx.font = '16px sans-serif';
+    ctx.fillText('Game loop running · ' + Math.round(1000/dt) + ' FPS', 20, 30);
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
