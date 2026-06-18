@@ -184,9 +184,11 @@
     unlockedLevels: 1,
   };
   function transition(newMode){
-    if (!VALID_MODES.includes(newMode)) {
-      console.error('Invalid mode:', newMode);
-      return;
+    if (!VALID_MODES.includes(newMode)) { console.error('Invalid mode:', newMode); return; }
+    if (newMode === 'playing' && state.mode !== 'paused') {
+      currentLevel = loadLevel(state.levelIdx);
+      if (!currentLevel) { state.mode = 'menu'; return; }
+      initCarForLevel(currentLevel);
     }
     state.mode = newMode;
   }
@@ -294,8 +296,43 @@
     render();
     requestAnimationFrame(loop);
   }
+  // ===== LOGIC =====
+  function initCarForLevel(lv){
+    // 玩家车从底部出现，向北行驶（heading=0 表示朝上）
+    state.car = { x: 400, y: 540, heading: 0, speed: 80, stopped: false, currentLane: 'forward' };
+    state.score = SCORE_CONFIG.initial;
+    state.currentDecisionPoint = null;
+    // 初始化信号灯状态
+    state.signalStates = {};
+    state.signalStart = performance.now();
+  }
+  function updateSignals(now){
+    if (!currentLevel) return;
+    currentLevel.signals.forEach(function(sig){
+      const cycleTotal = sig.program.reduce(function(s,p){ return s + p.duration; }, 0);
+      const elapsed = (now - state.signalStart) % cycleTotal;
+      let t = elapsed;
+      for (let i = 0; i < sig.program.length; i++) {
+        if (t < sig.program[i].duration) {
+          state.signalStates[sig.id] = sig.program[i].state;
+          return;
+        }
+        t -= sig.program[i].duration;
+      }
+    });
+  }
+  function updateCar(dt){
+    const car = state.car;
+    if (!car || car.stopped) return;
+    // 简化：车沿 -y 方向匀速前进
+    car.y -= car.speed * dt / 1000;
+  }
+
   function update(dt){
-    // 各模式 update 逻辑后续 task 填充
+    updateSignals(performance.now());
+    if (state.mode === 'playing' || state.mode === 'awaiting-decision') {
+      updateCar(dt);
+    }
   }
   function render(){
     drawRoad(currentLevel && currentLevel.road);
