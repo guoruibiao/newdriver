@@ -135,6 +135,18 @@
       correct: '停车等待绿灯。',
       rule: 'GB 5768 道路交通标志'
     },
+    'arrow-green-go': {
+      title: '箭头绿灯通行',
+      why: '对应方向的箭头绿灯亮起，该方向可通行。',
+      correct: '按自己车道对应方向的箭头灯行驶。',
+      rule: '《道交法实施条例》第 38 条'
+    },
+    'arrow-red-stop': {
+      title: '箭头红灯禁止该方向',
+      why: '某方向箭头为红，该方向禁止通行。',
+      correct: '等待该方向箭头变绿。',
+      rule: '《道交法实施条例》第 38 条'
+    },
     'unknown-action': {
       title: '未识别的操作',
       why: '系统未识别该动作。',
@@ -244,8 +256,43 @@
         }
       }],
       completion: { intersections: 1 }
+    },
+    {
+      id: 'L4',
+      title: '第 4 关 · 方向箭头灯',
+      intro: '前方箭头灯：直行绿，左转红。按对应箭头行驶。',
+      passScore: 80,
+      road: {
+        lanes: [{ x: 400, w: 80 }],
+        centerLine: { x: 400 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+      },
+      signals: [
+        { id: 'sig-arrow', type: 'arrow', pos: { x: 340, y: 240 },
+          program: [
+            { state: 'forward-green', duration: 5000 },
+            { state: 'all-red', duration: 2000 },
+            { state: 'left-green', duration: 3000 },
+            { state: 'all-red', duration: 1000 }
+          ] }
+      ],
+      signs: [],
+      decisionPoints: [{
+        id: 'dp-1', atIntersection: 'int-1',
+        signalBindings: ['sig-arrow'],
+        trigger: { x: 400, y: 380, radius: 50 },
+        prompt: '观察箭头灯，选择正确方向。',
+        evaluate: {
+          'pass-through': { _dynamic: 'arrowForwardBySignal', deduct: 30, explanationKey: 'arrow-red-stop' },
+          'left-turn':    { _dynamic: 'arrowLeftBySignal',    deduct: 30, explanationKey: 'arrow-red-stop' },
+          'right-turn':   { correct: false, deduct: 0,  explanationKey: 'unknown-action' },
+          'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
+        }
+      }],
+      completion: { intersections: 1 }
     }
-    // L4~L8 在后续 task 添加
+    // L5~L8 在后续 task 添加
   ];
 
   // ===== LEVEL LOADER =====
@@ -305,6 +352,20 @@
       }
       // 红灯
       return { correct: false, deduct: rule.deduct, explanationKey: rule.explanationKey };
+    }
+    if (rule._dynamic === 'arrowForwardBySignal') {
+      const sigId = dp.signalBindings && dp.signalBindings[0];
+      const sigState = sigId ? signalStates[sigId] : null;
+      if (!sigState) return { correct: false, deduct: SCORE_CONFIG.deductBySeverity.normal, explanationKey: 'signal-missing' };
+      const ok = (sigState === 'forward-green');
+      return { correct: ok, deduct: ok ? 0 : rule.deduct, explanationKey: ok ? 'arrow-green-go' : rule.explanationKey };
+    }
+    if (rule._dynamic === 'arrowLeftBySignal') {
+      const sigId = dp.signalBindings && dp.signalBindings[0];
+      const sigState = sigId ? signalStates[sigId] : null;
+      if (!sigState) return { correct: false, deduct: SCORE_CONFIG.deductBySeverity.normal, explanationKey: 'signal-missing' };
+      const ok = (sigState === 'left-green');
+      return { correct: ok, deduct: ok ? 0 : rule.deduct, explanationKey: ok ? 'arrow-green-go' : rule.explanationKey };
     }
     // 3. 静态规则
     return { correct: rule.correct, deduct: rule.deduct || 0, explanationKey: rule.explanationKey };
