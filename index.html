@@ -159,6 +159,18 @@
       correct: '等直行绿灯亮起再驶入待转区。',
       rule: '《道交法实施条例》第 51 条'
     },
+    'yellow-stop': {
+      title: '黄灯应停车',
+      why: '黄灯亮时，未过停止线的车辆应停车等待；已过停止线的可继续通行。',
+      correct: '看见黄灯，能停就停。',
+      rule: '《道交法实施条例》第 38 条'
+    },
+    'yellow-pass': {
+      title: '黄灯已过线可通行',
+      why: '黄灯亮时已越过停止线的车辆可继续通行。',
+      correct: '保持速度通过路口，不抢黄灯。',
+      rule: '《道交法实施条例》第 38 条'
+    },
     'unknown-action': {
       title: '未识别的操作',
       why: '系统未识别该动作。',
@@ -368,8 +380,37 @@
         }
       ],
       completion: { intersections: 1 }
+    },
+    {
+      id: 'L7',
+      title: '第 7 关 · 黄灯闪烁',
+      intro: '前方黄灯。能停就停，已过线则继续。',
+      passScore: 80,
+      road: {
+        lanes: [{ x: 400, w: 80 }],
+        centerLine: { x: 400 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+      },
+      signals: [
+        { id: 'sig-y', type: 'circle', pos: { x: 340, y: 240 },
+          program: [{ state: 'yellow', duration: 99999 }] }
+      ],
+      signs: [],
+      decisionPoints: [{
+        id: 'dp-1', atIntersection: 'int-1',
+        trigger: { x: 400, y: 380, radius: 50 },
+        prompt: '黄灯亮。能停就停。',
+        evaluate: {
+          'pass-through': { correct: false, deduct: 30, explanationKey: 'yellow-stop' },
+          'left-turn':    { correct: false, deduct: 30, explanationKey: 'yellow-stop' },
+          'right-turn':   { correct: false, deduct: 30, explanationKey: 'yellow-stop' },
+          'stop':         { correct: true,  deduct: 0,  explanationKey: 'yellow-stop' }
+        }
+      }],
+      completion: { intersections: 1 }
     }
-    // L7~L8 在后续 task 添加
+    // L8 在后续 task 添加
   ];
 
   // ===== LEVEL LOADER =====
