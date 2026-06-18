@@ -211,7 +211,9 @@
   };
   function transition(newMode){
     if (!VALID_MODES.includes(newMode)) { console.error('Invalid mode:', newMode); return; }
-    if (newMode === 'playing' && state.mode !== 'paused') {
+    // 仅在"新开局"时重新加载关卡并初始化车辆；从 paused/awaiting-decision/explaining 回到 playing 不重置
+    const FRESH_START_MODES = ['menu', 'level-complete', 'level-failed'];
+    if (newMode === 'playing' && FRESH_START_MODES.includes(state.mode)) {
       currentLevel = loadLevel(state.levelIdx);
       if (!currentLevel) { state.mode = 'menu'; return; }
       initCarForLevel(currentLevel);
