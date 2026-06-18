@@ -16,6 +16,14 @@
 <body>
 <div id="app">
   <canvas id="game" width="800" height="600"></canvas>
+  <div id="hud" class="overlay" style="display:none;">
+    <div style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.7);color:#fff;padding:8px 14px;border-radius:6px;font-size:14px;">
+      <div id="hud-level">关卡</div>
+      <div id="hud-score" style="font-size:20px;font-weight:bold;">100</div>
+      <div id="hud-pass" style="font-size:11px;opacity:0.7;">通过线: 80</div>
+    </div>
+    <button id="hud-pause" style="position:absolute;top:12px;right:12px;background:rgba(0,0,0,0.7);color:#fff;border:none;padding:8px 14px;border-radius:6px;font-size:14px;cursor:pointer;">暂停 (Esc)</button>
+  </div>
 </div>
 <script>
 (function(){
@@ -366,9 +374,23 @@
     ctx.fillStyle = '#fff';
     ctx.font = '16px sans-serif';
     ctx.fillText('mode = ' + state.mode, 20, 30);
+    updateHUD();
   }
 
   // ===== INPUT =====
+  const hudEl = document.getElementById('hud');
+  function updateHUD(){
+    if (!currentLevel) return;
+    const show = (state.mode === 'playing' || state.mode === 'awaiting-decision' || state.mode === 'explaining');
+    hudEl.style.display = show ? 'block' : 'none';
+    document.getElementById('hud-level').textContent = currentLevel.title;
+    document.getElementById('hud-score').textContent = state.score;
+    document.getElementById('hud-pass').textContent = '通过线: ' + currentLevel.passScore;
+  }
+  document.getElementById('hud-pause').addEventListener('click', function(){
+    if (state.mode === 'paused') transition('playing');
+    else if (state.mode === 'playing' || state.mode === 'awaiting-decision') transition('paused');
+  });
   function handleAction(action){
     if (state.mode === 'explaining') return;
     if (state.mode === 'awaiting-decision') {
@@ -422,7 +444,11 @@
   }
 
   document.addEventListener('keydown', function(e){
-    const map = { 'Space':'stop','ArrowUp':'pass-through','ArrowDown':'stop','ArrowLeft':'left-turn','ArrowRight':'right-turn','Escape':'pause' };
+    if (e.code === 'Escape') {
+      if (state.mode === 'paused') transition('playing');
+      else if (state.mode === 'playing' || state.mode === 'awaiting-decision') transition('paused');
+    }
+    const map = { 'Space':'stop','ArrowUp':'pass-through','ArrowDown':'stop','ArrowLeft':'left-turn','ArrowRight':'right-turn' };
     const action = map[e.code];
     if (action) { e.preventDefault(); handleAction(action); }
   });
