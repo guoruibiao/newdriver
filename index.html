@@ -138,6 +138,30 @@
     document.body.appendChild(div);
   }
 
+  // ===== EVALUATE DECISION =====
+  function evaluateDecision(dp, action, signalStates){
+    // 1. action 不在 evaluate 表里
+    if (!dp.evaluate[action]) {
+      return { correct: false, deduct: 0, explanationKey: 'unknown-action' };
+    }
+    const rule = dp.evaluate[action];
+    // 2. 动态规则（如根据信号灯状态判定）
+    if (rule._dynamic === 'passThroughBySignal') {
+      const sigId = (dp.signalBindings && dp.signalBindings[0]) || (currentLevel && currentLevel.signals[0] && currentLevel.signals[0].id);
+      const sigState = sigId ? signalStates[sigId] : null;
+      if (!sigState) {
+        return { correct: false, deduct: 20, explanationKey: 'signal-missing' };
+      }
+      if (sigState === 'green' || sigState === 'yellow') {
+        return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+      }
+      // 红灯
+      return { correct: false, deduct: rule.deduct, explanationKey: rule.explanationKey };
+    }
+    // 3. 静态规则
+    return { correct: rule.correct, deduct: rule.deduct || 0, explanationKey: rule.explanationKey };
+  }
+
   // ===== STATE =====
   let currentLevel = null;
   const VALID_MODES = ['menu','playing','awaiting-decision','explaining','paused','level-complete','level-failed'];
@@ -275,7 +299,7 @@
 
   // ===== EXPOSE =====
   window.game = { state, transition };
-  window.game.__test = { levels: LEVELS, validateLevel, loadLevel };
+  window.game.__test = { levels: LEVELS, validateLevel, loadLevel, evaluateDecision };
 
   requestAnimationFrame(loop);
 })();
