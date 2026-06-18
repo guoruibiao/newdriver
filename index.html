@@ -181,6 +181,7 @@
     car: null,
     currentDecisionPoint: null,
     signalStates: {},
+    signalStart: 0,
     unlockedLevels: 1,
   };
   function transition(newMode){
@@ -299,7 +300,8 @@
   // ===== LOGIC =====
   function initCarForLevel(lv){
     // 玩家车从底部出现，向北行驶（heading=0 表示朝上）
-    state.car = { x: 400, y: 540, heading: 0, speed: 80, stopped: false, currentLane: 'forward' };
+    const startLane = lv.road.lanes[0];
+    state.car = { x: startLane.x, y: canvas.height - 60, heading: 0, speed: 80, stopped: false };
     state.score = SCORE_CONFIG.initial;
     state.currentDecisionPoint = null;
     // 初始化信号灯状态
