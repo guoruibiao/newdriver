@@ -368,9 +368,64 @@
     ctx.fillText('mode = ' + state.mode, 20, 30);
   }
 
+  // ===== INPUT =====
+  function handleAction(action){
+    if (state.mode === 'awaiting-decision') {
+      decide(action);
+    } else if (state.mode === 'playing') {
+      // 玩家在行驶中可主动停车（Space）
+      if (action === 'stop') state.car.stopped = !state.car.stopped;
+    }
+  }
+  function decide(action){
+    const dp = state.currentDecisionPoint;
+    if (!dp) return;
+    const result = evaluateDecision(dp, action, state.signalStates);
+    if (result.deduct > 0) {
+      applyDeduct(result.deduct);
+      showExplanation(result.explanationKey);
+      // mode 切换由讲解弹窗关闭时处理
+    } else {
+      // 正确决策：车通过路口
+      proceedThrough(action);
+      state.currentDecisionPoint = null;
+      transition('playing');
+      checkLevelComplete();
+    }
+  }
+  function proceedThrough(action){
+    // 简化：让车继续向北，离开决策区
+    state.car.y -= 80;
+    state.car.stopped = false;
+  }
+  function checkLevelComplete(){
+    // 简化：车到达屏幕顶部视为完成
+    if (state.car.y < 50) {
+      const pass = checkPass(state.score, currentLevel.passScore);
+      transition(pass ? 'level-complete' : 'level-failed');
+    }
+  }
+  function showExplanation(key){
+    // UI 在 Task 13 实现
+    console.log('[Explain]', key, window.game.__test.EXPLANATIONS[key]);
+    // 临时：3 秒后自动关闭
+    setTimeout(function(){
+      transition('playing');
+      proceedThrough('pass-through');
+      state.currentDecisionPoint = null;
+      checkLevelComplete();
+    }, 3000);
+  }
+
+  document.addEventListener('keydown', function(e){
+    const map = { 'Space':'stop','ArrowUp':'pass-through','ArrowDown':'stop','ArrowLeft':'left-turn','ArrowRight':'right-turn','Escape':'pause' };
+    const action = map[e.code];
+    if (action) { e.preventDefault(); handleAction(action); }
+  });
+
   // ===== EXPOSE =====
   window.game = { state, transition };
-  window.game.__test = { levels: LEVELS, validateLevel, loadLevel, evaluateDecision, applyDeduct, checkPass };
+  window.game.__test = { levels: LEVELS, validateLevel, loadLevel, evaluateDecision, applyDeduct, checkPass, EXPLANATIONS, handleAction };
 
   requestAnimationFrame(loop);
 })();
