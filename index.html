@@ -147,6 +147,18 @@
       correct: '等待该方向箭头变绿。',
       rule: '《道交法实施条例》第 38 条'
     },
+    'waiting-zone-enter': {
+      title: '进入左转待转区',
+      why: '直行绿灯、左转红灯时，左转车辆应驶入路口中央的左转待转区等待，左转绿灯亮后再完成转弯。',
+      correct: '直行绿灯时进入待转区，左转绿灯时通过。',
+      rule: '《道交法实施条例》第 51 条'
+    },
+    'waiting-zone-premature': {
+      title: '未到时机进入待转区',
+      why: '直行红灯时不得进入左转待转区。',
+      correct: '等直行绿灯亮起再驶入待转区。',
+      rule: '《道交法实施条例》第 51 条'
+    },
     'unknown-action': {
       title: '未识别的操作',
       why: '系统未识别该动作。',
@@ -323,8 +335,41 @@
         }
       }],
       completion: { intersections: 1 }
+    },
+    {
+      id: 'L6',
+      title: '第 6 关 · 左转待转区',
+      intro: '直行绿灯时进入待转区，左转绿灯时完成左转。',
+      passScore: 80,
+      road: {
+        lanes: [{ x: 400, w: 80 }],
+        centerLine: { x: 400 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+      },
+      signals: [
+        { id: 'sig-fwd', type: 'circle', pos: { x: 340, y: 240 },
+          program: [{ state: 'green', duration: 99999 }] },
+        { id: 'sig-left', type: 'circle', pos: { x: 460, y: 240 },
+          program: [{ state: 'red', duration: 99999 }] }
+      ],
+      signs: [],
+      decisionPoints: [
+        {
+          id: 'dp-enter', atIntersection: 'int-1',
+          trigger: { x: 400, y: 380, radius: 50 },
+          prompt: '直行绿、左转红。要左转的话，怎么办？',
+          evaluate: {
+            'pass-through': { correct: true,  deduct: 0,  explanationKey: 'green-light-go' },
+            'left-turn':    { correct: true,  deduct: 0,  explanationKey: 'waiting-zone-enter' },
+            'right-turn':   { correct: false, deduct: 0,  explanationKey: 'unknown-action' },
+            'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
+          }
+        }
+      ],
+      completion: { intersections: 1 }
     }
-    // L6~L8 在后续 task 添加
+    // L7~L8 在后续 task 添加
   ];
 
   // ===== LEVEL LOADER =====
