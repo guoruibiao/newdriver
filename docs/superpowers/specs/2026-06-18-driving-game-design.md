@@ -346,24 +346,25 @@ function evaluateDecision(dp, action, signals) {
        │  内置自检     │ ← 启动时 schema 校验 + 红条提示
        └──────┬───────┘
        ┌──────┴───────┐
-       │  纯函数单测   │ ← 判分函数 Node 跑
+       │  Console 自测  │ ← 浏览器 console 跑判分 case
        └──────────────┘
 ```
 
-### 8.2 纯函数单测
+### 8.2 判分函数自测（浏览器 console）
 
-`scoring.js` 暴露 `evaluateDecision` 到 `window.__test__`（浏览器）和 `module.exports`（Node），附 `test/scoring.spec.js`：
+判分函数 `evaluateDecision` 内嵌在主 `<script>` 中（保持单 HTML 部署），但通过 `window.__test__ = { evaluateDecision, LEVELS }` 暴露到全局，开发者可在浏览器 DevTools console 跑测试 case：
 
 ```js
-const { evaluateDecision } = require('../scoring.js');
-const assert = require('assert');
-assert.strictEqual(
-  evaluateDecision(L2_DP1, 'right-turn', L2_SIGNALS).correct, true
-);
+// 浏览器 console
+const t = window.__test__;
+const dp = t.LEVELS[1].decisionPoints[0];
+const sig = t.LEVELS[1].signals;
+console.assert(t.evaluateDecision(dp, 'right-turn', sig).correct === true);
+console.assert(t.evaluateDecision(dp, 'pass-through', sig).correct === false);
 // 覆盖 6 场景 × 4 动作 ≈ 24 case
 ```
 
-跑：`node test/scoring.spec.js`，零依赖。
+附带一个 `test/console-snippet.js`（仅供复制粘贴到 console，不参与构建）。v1.1 若引入 Playwright，再考虑把判分函数抽到独立 `scoring.js` 走 Node 测试。
 
 ### 8.3 内置自检（启动时）
 
@@ -386,6 +387,7 @@ assert.strictEqual(
 - 不引入 vitest/jest（违背"分发简单"约束）
 - 不做代码覆盖率
 - 不做 CI（v1 不上）
+- v1 不抽 `scoring.js` 为独立文件（保持单 HTML）；Node 单测留到 v1.1 引入 Playwright 时一并处理
 
 ---
 
