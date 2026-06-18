@@ -330,10 +330,34 @@
     car.y -= car.speed * dt / 1000;
   }
 
+  function checkDecisionZone(){
+    if (!state.car || !currentLevel) return;
+    if (state.mode !== 'playing') return;
+    for (const dp of currentLevel.decisionPoints) {
+      const dx = state.car.x - dp.trigger.x;
+      const dy = state.car.y - dp.trigger.y;
+      if (Math.sqrt(dx*dx + dy*dy) < dp.trigger.radius) {
+        state.currentDecisionPoint = dp;
+        transition('awaiting-decision');
+        showDecisionPrompt(dp);
+        return;
+      }
+    }
+  }
+
+  function showDecisionPrompt(dp){
+    // UI 在 Task 13 实现，先 console.log
+    console.log('[DecisionPrompt]', dp.prompt);
+  }
+
   function update(dt){
     updateSignals(performance.now());
-    if (state.mode === 'playing' || state.mode === 'awaiting-decision') {
+    if (state.mode === 'playing') {
       updateCar(dt);
+      checkDecisionZone();
+    } else if (state.mode === 'awaiting-decision') {
+      // 等待玩家决策，车继续滑行（轻微）
+      // 不主动改变模式
     }
   }
   function render(){
