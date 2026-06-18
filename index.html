@@ -22,17 +22,49 @@
   'use strict';
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
+
+  // ===== STATE =====
+  const VALID_MODES = ['menu','playing','awaiting-decision','explaining','paused','level-complete','level-failed'];
+  const state = {
+    mode: 'menu',
+    levelIdx: 0,
+    score: 100,
+    car: null,
+    currentDecisionPoint: null,
+    signalStates: {},
+    unlockedLevels: 1,
+  };
+  function transition(newMode){
+    if (!VALID_MODES.includes(newMode)) {
+      console.error('Invalid mode:', newMode);
+      return;
+    }
+    state.mode = newMode;
+  }
+
+  // ===== LOOP =====
   let lastT = 0;
   function loop(t){
     const dt = Math.min(100, t - lastT || 16);
     lastT = t;
+    update(dt);
+    render();
+    requestAnimationFrame(loop);
+  }
+  function update(dt){
+    // 各模式 update 逻辑后续 task 填充
+  }
+  function render(){
     ctx.fillStyle = '#2d5a2d';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = '#fff';
     ctx.font = '16px sans-serif';
-    ctx.fillText('Game loop running · ' + Math.round(1000/dt) + ' FPS', 20, 30);
-    requestAnimationFrame(loop);
+    ctx.fillText('mode = ' + state.mode, 20, 30);
   }
+
+  // ===== EXPOSE =====
+  window.game = { state, transition };
+
   requestAnimationFrame(loop);
 })();
 </script>
