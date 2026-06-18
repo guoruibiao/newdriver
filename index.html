@@ -119,6 +119,23 @@
     ctx.closePath();
     ctx.fill();
   }
+  function drawCar(car){
+    if (!car) return;
+    ctx.save();
+    ctx.translate(car.x, car.y);
+    ctx.rotate(car.heading || 0);
+    // 车身（红色矩形）
+    ctx.fillStyle = '#c33';
+    ctx.fillRect(-9, -16, 18, 32);
+    // 挡风玻璃
+    ctx.fillStyle = '#aac';
+    ctx.fillRect(-7, -12, 14, 8);
+    // 前灯
+    ctx.fillStyle = '#ffd';
+    ctx.fillRect(-8, -16, 3, 2);
+    ctx.fillRect(5, -16, 3, 2);
+    ctx.restore();
+  }
 
   // ===== LOOP =====
   let lastT = 0;
@@ -135,6 +152,7 @@
   function render(){
     drawRoad(currentLevel && currentLevel.road);
     drawLights(currentLevel && currentLevel.signals, state.signalStates);
+    drawCar(state.car);
     ctx.fillStyle = '#fff';
     ctx.font = '16px sans-serif';
     ctx.fillText('mode = ' + state.mode, 20, 30);
