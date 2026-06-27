@@ -23,6 +23,7 @@
       <div id="hud-pass" style="font-size:11px;opacity:0.7;">通过线: 80</div>
     </div>
     <button id="hud-pause" style="position:absolute;top:12px;right:12px;background:rgba(0,0,0,0.7);color:#fff;border:none;padding:8px 14px;border-radius:6px;font-size:14px;cursor:pointer;">暂停 (Esc)</button>
+    <div id="hud-waiting" style="display:none;position:absolute;top:60px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.85);color:#fff;padding:8px 16px;border-radius:6px;font-size:13px;text-align:center;white-space:nowrap;"></div>
   </div>
   <div id="decision-prompt" class="overlay" style="display:none;">
     <div style="position:absolute;bottom:60px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.85);color:#fff;padding:12px 20px;border-radius:8px;text-align:center;max-width:80%;">
@@ -44,8 +45,8 @@
 
   <div id="start-screen" class="overlay" style="display:flex;">
     <div style="position:absolute;inset:0;background:linear-gradient(135deg,#1a3a1a,#2d5a2d);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;">
-      <h1 style="margin-bottom:32px;font-size:32px;">新手司机道路考核</h1>
-      <div id="ss-levels" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;max-width:560px;"></div>
+      <h1 style="margin-bottom:24px;font-size:clamp(20px,5vw,32px);">新手司机道路考核</h1>
+      <div id="ss-levels" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:10px;width:100%;max-width:640px;padding:0 12px;"></div>
       <div id="ss-errors"></div>
     </div>
   </div>
@@ -80,9 +81,12 @@
   <div id="touch-buttons" class="overlay" style="display:none;">
     <div style="position:absolute;bottom:12px;left:50%;transform:translateX(-50%);display:flex;gap:8px;">
       <button data-touch="stop" style="width:54px;height:54px;border-radius:50%;border:none;background:rgba(0,0,0,0.7);color:#fff;font-size:12px;">停/行</button>
+      <button data-touch="lane-left" style="width:44px;height:44px;border-radius:50%;border:none;background:rgba(0,0,0,0.5);color:#fff;font-size:16px;">◁</button>
       <button data-touch="pass-through" style="width:54px;height:54px;border-radius:50%;border:none;background:rgba(0,0,0,0.7);color:#fff;font-size:20px;">↑</button>
+      <button data-touch="lane-right" style="width:44px;height:44px;border-radius:50%;border:none;background:rgba(0,0,0,0.5);color:#fff;font-size:16px;">▷</button>
       <button data-touch="left-turn" style="width:54px;height:54px;border-radius:50%;border:none;background:rgba(0,0,0,0.7);color:#fff;font-size:20px;">←</button>
       <button data-touch="right-turn" style="width:54px;height:54px;border-radius:50%;border:none;background:rgba(0,0,0,0.7);color:#fff;font-size:20px;">→</button>
+      <button data-touch="u-turn" style="width:54px;height:54px;border-radius:50%;border:none;background:rgba(0,0,0,0.7);color:#fff;font-size:11px;">掉头</button>
     </div>
   </div>
 </div>
@@ -96,6 +100,38 @@
   const SCORE_CONFIG = {
     initial: 100,
     deductBySeverity: { minor: 10, normal: 20, major: 30, critical: 50 }
+  };
+
+  var NPC_PATH_SCRIPTS = {
+    'south-straight': function(npc, intersection, road) {
+      npc.moveTarget = { x: npc.x, y: canvas.height + 40, onArrive: null };
+    },
+    'south-left-turn': function(npc, intersection, road) {
+      var chw = road.crossHalfWidth || 60;
+      var entryY = intersection.center.y - chw;
+      npc.moveTarget = {
+        x: npc.x, y: entryY,
+        onArrive: function() {
+          npc.turnTarget = Math.PI / 2;
+          npc.turnRate = npc.speed / chw;
+        }
+      };
+    },
+    'east-straight': function(npc, intersection, road) {
+      npc.moveTarget = { x: -40, y: npc.y, onArrive: null };
+    },
+    'north-straight': function(npc, intersection, road) {
+      npc.moveTarget = { x: npc.x, y: -40, onArrive: null };
+    },
+    'pedestrian-west': function(npc, intersection, road) {
+      npc.moveTarget = { x: -40, y: npc.y, onArrive: null };
+    },
+    'pedestrian-east': function(npc, intersection, road) {
+      npc.moveTarget = { x: canvas.width + 40, y: npc.y, onArrive: null };
+    },
+    'west-straight': function(npc, intersection, road) {
+      npc.moveTarget = { x: canvas.width + 40, y: npc.y, onArrive: null };
+    }
   };
 
   const EXPLANATIONS = {
@@ -147,17 +183,47 @@
       correct: '等待该方向箭头变绿。',
       rule: '《道交法实施条例》第 38 条'
     },
+    'arrow-red-other-ok': {
+      title: '其他方向可通行',
+      why: '右转箭头红灯只禁止右转，直行和左转不受该箭头灯约束。',
+      correct: '不受该箭头灯控制的方向可正常通行。',
+      rule: '《道交法实施条例》第 38 条'
+    },
     'waiting-zone-enter': {
-      title: '进入左转待转区',
-      why: '直行绿灯、左转红灯时，左转车辆应驶入路口中央的左转待转区等待，左转绿灯亮后再完成转弯。',
-      correct: '直行绿灯时进入待转区，左转绿灯时通过。',
+      title: '进入转弯等待区',
+      why: '直行绿灯、转弯箭头红灯时，转弯车辆应驶入路口内的等待区等待，箭头绿灯亮后再完成转弯。',
+      correct: '直行绿灯时进入等待区，转弯绿灯时通过。',
       rule: '《道交法实施条例》第 51 条'
     },
     'waiting-zone-premature': {
-      title: '未到时机进入待转区',
-      why: '直行红灯时不得进入左转待转区。',
+      title: '红灯时不得进入待转区',
+      why: '直行和转弯信号灯均为红灯时，车辆必须停在停止线后等待。此时进入待转区属于越线闯红灯。',
       correct: '等直行绿灯亮起再驶入待转区。',
+      rule: '《道路交通安全法》第 38 条'
+    },
+    'waiting-zone-turn-premature': {
+      title: '转弯箭头红灯时不得转弯',
+      why: '已在等待区内等待时，转弯箭头仍为红灯，不得提前转弯。',
+      correct: '等转弯箭头绿灯亮起后再完成转弯。',
       rule: '《道交法实施条例》第 51 条'
+    },
+    'right-turn-waiting-zone-enter': {
+      title: '进入右转等待区',
+      why: '直行绿灯、右转箭头红灯时，右转车辆应驶入路口右侧等待区，右转绿灯亮后再通行。',
+      correct: '直行绿灯时进入等待区，右转绿灯时通过。',
+      rule: '《道交法实施条例》第 51 条'
+    },
+    'right-turn-waiting-zone-premature': {
+      title: '红灯时不得进右转等待区',
+      why: '圆饼红灯时不得进入右转等待区。',
+      correct: '等直行绿灯亮起再驶入等待区。',
+      rule: '《道交法实施条例》第 51 条'
+    },
+    'yellow-turn-waiting-zone': {
+      title: '黄灯已过线可进入等待区转弯',
+      why: '黄灯闪烁时已过停止线的车辆，可进入路口等待区完成转弯。',
+      correct: '已过线→驶入等待区等待安全后转弯；未过线→停车等待。',
+      rule: '《道交法实施条例》第 38 条'
     },
     'yellow-stop': {
       title: '黄灯应停车',
@@ -165,11 +231,59 @@
       correct: '看见黄灯，能停就停。',
       rule: '《道交法实施条例》第 38 条'
     },
-    'yellow-pass': { // v1.1 预留：黄灯已过线场景
+    'yellow-pass': {
       title: '黄灯已过线可通行',
       why: '黄灯亮时已越过停止线的车辆可继续通行。',
       correct: '保持速度通过路口，不抢黄灯。',
       rule: '《道交法实施条例》第 38 条'
+    },
+    'yellow-flash-slow': {
+      title: '黄灯闪烁减速慢行',
+      why: '黄灯持续闪烁提示路口危险，应减速慢行、注意瞭望，确认安全后通过。',
+      correct: '减速慢行，确认安全后通过。',
+      rule: 'GB 5768 道路交通信号灯'
+    },
+    'yellow-right-allowed': {
+      title: '圆饼黄灯可右转',
+      why: '圆饼黄灯（无禁右标志）与圆饼红灯同理，右转不受圆饼灯控制，但须减速慢行、让行人和直行车辆。',
+      correct: '减速慢行，确认安全后右转。',
+      rule: '《道交法实施条例》第 38 条'
+    },
+    'yellow-left-wait': {
+      title: '黄灯不得左转',
+      why: '黄灯亮时未过停止线不得左转，左转需等绿灯。',
+      correct: '停车等待绿灯。',
+      rule: '《道交法实施条例》第 38 条'
+    },
+    'wrong-lane-for-action': {
+      title: '车道与转向不匹配',
+      why: '必须在对应车道完成对应转向。左转车道只能左转，右转车道只能右转，直行车道只能直行。',
+      correct: '提前变道到目标方向对应的车道，再按指示通行。',
+      rule: '《道交法实施条例》第 51 条'
+    },
+    'u-turn-allowed': {
+      title: '允许掉头',
+      why: '无禁止掉头标志、且不影响其他车辆通行时，可以在路口掉头。',
+      correct: '确认安全后完成掉头。',
+      rule: '《道交法实施条例》第 49 条'
+    },
+    'u-turn-no-sign': {
+      title: '禁止掉头',
+      why: '路口设有禁止掉头标志时，不得掉头。',
+      correct: '选择其他路线，不得在此路口掉头。',
+      rule: 'GB 5768 道路交通标志'
+    },
+    'u-turn-red-light': {
+      title: '红灯不得掉头',
+      why: '红灯期间禁止掉头，须等绿灯亮起。',
+      correct: '停车等待绿灯。',
+      rule: '《道交法实施条例》第 38 条'
+    },
+    'lane-change-required': {
+      title: '需提前变道',
+      why: '当前车道不适用于所选方向，应提前变道到对应车道。',
+      correct: '按 A/D 变道到正确车道后再操作。',
+      rule: '《道交法实施条例》第 51 条'
     },
     'unknown-action': {
       title: '未识别的操作',
@@ -177,19 +291,241 @@
       correct: '使用 Space / 方向键操作。',
       rule: '——'
     },
+    'signal-malfunction-stop': {
+      title: '信号灯故障停车观察',
+      why: '信号灯全灭时，路口无信号指挥，必须停车观察确认安全后再通过。',
+      correct: '减速停车，左右观察，确认安全后缓慢通过。',
+      rule: '《道交法实施条例》第 52 条'
+    },
+    'signal-malfunction-no-slow': {
+      title: '信号灯故障未减速',
+      why: '信号灯全灭不代表可以畅通无阻，必须减速停车观察、确认安全后再通过。',
+      correct: '先减速停车观察，确认安全后再通行。',
+      rule: '《道交法实施条例》第 52 条'
+    },
+    'signal-malfunction-proceed': {
+      title: '信号灯故障确认安全后通过',
+      why: '信号灯故障时，已减速观察确认安全后可以通行。',
+      correct: '缓慢通过路口，注意避让。',
+      rule: '《道交法实施条例》第 52 条'
+    },
+    'railroad-crossing-violation': {
+      title: '铁道路口闯越',
+      why: '栏杆放下或红灯闪烁时禁止通行，必须停车等待栏杆抬起。',
+      correct: '在停止线前停车等待，栏杆抬起后再通过。',
+      rule: '《道路交通安全法》第 46 条'
+    },
+    'railroad-crossing-stop': {
+      title: '铁道路口停车等待',
+      why: '栏杆放下或红灯闪烁时停车等待是正确做法。',
+      correct: '停车等待，栏杆抬起、确认安全后再通过。',
+      rule: '《道路交通安全法》第 46 条'
+    },
+    'railroad-crossing-proceed': {
+      title: '铁道路口安全通过',
+      why: '栏杆抬起，确认安全后可以通行。',
+      correct: '观察左右确认无来车后通过。',
+      rule: '《道路交通安全法》第 46 条'
+    },
+    'variable-lane-wrong-direction': {
+      title: '可变车道方向不匹配',
+      why: '可变车道的行驶方向由上方LED指示器决定，不是固定的。当前指示器方向与操作不符。',
+      correct: '观察LED指示器方向，在对应方向时使用该车道，否则变道到固定车道。',
+      rule: 'GB 5768 道路交通标志 · 可变车道'
+    },
+    'variable-lane-correct': {
+      title: '可变车道正确使用',
+      why: 'LED指示器当前方向与操作一致，可以在可变车道完成该操作。',
+      correct: '确认指示器方向后再通行。',
+      rule: 'GB 5768 道路交通标志 · 可变车道'
+    },
+    'solid-line-crossing': {
+      title: '压实线违章',
+      why: '实线（白色或黄色）禁止跨越，压线属于违章行为。',
+      correct: '在车道内行驶，不跨越实线。如需变道，在虚线段完成。',
+      rule: '《道交法实施条例》第 44 条 · GB 5768 标线'
+    },
+    'guide-area-driving': {
+      title: '导流线区域行驶',
+      why: '导流线（斜纹/V形区域）禁止驶入或压线行驶，仅用于引导车流。',
+      correct: '在导流线外的车道内行驶，不得驶入导流区域。',
+      rule: 'GB 5768 道路交通标线 · 导流线'
+    },
+    'speeding': {
+      title: '超速行驶',
+      why: '限速路段必须遵守限速标志规定，超速行驶属于违章。',
+      correct: '注意限速标志，按↓减速到限速值以内。',
+      rule: '《道路交通安全法》第 42 条'
+    },
+    'speed-limit-obeyed': {
+      title: '遵守限速',
+      why: '在限速路段内控制车速，不超过限速值。',
+      correct: '观察限速标志，调整车速到限速以内。',
+      rule: '《道路交通安全法》第 42 条'
+    },
     'signal-missing': {
       title: '信号灯故障',
       why: '路口信号灯未工作。',
       correct: '减速观察，确认安全后通过，必要时停车。',
       rule: '《道交法实施条例》第 52 条'
+    },
+    'left-turn-yield-straight': {
+      title: '转弯让直行',
+      why: '绿灯左转时，对向直行车辆有优先通行权。左转车辆必须让直行车辆先行。',
+      correct: '停车等待对向直行车通过后再左转。',
+      rule: '《道交法实施条例》第 52 条第 3 项'
+    },
+    'left-turn-yield-straight-fail': {
+      title: '未让直行车',
+      why: '转弯车辆未让直行车辆先行，与对向直行车形成冲突，极易发生事故。',
+      correct: '等对向直行车通过后再完成左转。',
+      rule: '《道交法实施条例》第 52 条第 3 项'
+    },
+    'right-yield-left-turn': {
+      title: '右转让左转',
+      why: '相对方向行驶时，右转弯车辆应当让左转弯车辆先行。因为左转弯车辆行驶路线更长、更危险。',
+      correct: '停车等待对向左转车通过后再右转。',
+      rule: '《道交法实施条例》第 52 条第 4 项'
+    },
+    'right-yield-left-turn-fail': {
+      title: '右转未让左转',
+      why: '右转车辆未让对向左转车辆先行，违反让行规则。',
+      correct: '等对向左转车通过后再完成右转。',
+      rule: '《道交法实施条例》第 52 条第 4 项'
+    },
+    'yield-to-right': {
+      title: '让右方来车先行',
+      why: '无信号控制的路口，应当让右方道路的来车先行。因为在驾驶位视角下，右侧来车更难观察。',
+      correct: '减速停车，观察右方来车，等其通过后再通行。',
+      rule: '《道交法实施条例》第 52 条第 2 项'
+    },
+    'yield-to-right-fail': {
+      title: '未让右方来车',
+      why: '无信号路口未让右方来车先行，极易造成侧面碰撞事故。',
+      correct: '停车观察，让右方来车先行后再通过。',
+      rule: '《道交法实施条例》第 52 条第 2 项'
+    },
+    'uturn-yield-oncoming': {
+      title: '掉头不妨碍正常行驶',
+      why: '掉头车辆不得妨碍对向正常行驶的车辆。对向直行车辆优先，掉头车辆须等待。',
+      correct: '停车等待对向来车通过后再完成掉头。',
+      rule: '《道路交通安全法》第 45 条'
+    },
+    'uturn-yield-oncoming-fail': {
+      title: '掉头未让对向车',
+      why: '掉头时未让对向正常行驶的车辆先行，妨碍了对方通行。',
+      correct: '等对向来车通过后再掉头。',
+      rule: '《道路交通安全法》第 45 条'
+    },
+    'pedestrian-yield': {
+      title: '避让行人',
+      why: '行人在斑马线上有优先通行权，机动车必须停车让行。',
+      correct: '停车等待行人完全通过斑马线后再通行。',
+      rule: '《道路交通安全法》第 47 条'
+    },
+    'pedestrian-yield-fail': {
+      title: '未避让行人',
+      why: '机动车行经斑马线时，遇行人正在通过应当停车让行。未让行属于违章行为。',
+      correct: '停车等待行人通过后再通行。',
+      rule: '《道路交通安全法》第 47 条'
+    },
+    'right-turn-pedestrian-yield': {
+      title: '右转让行人',
+      why: '右转车辆行经斑马线时，遇行人正在通过应当停车让行。',
+      correct: '停车等待行人通过斑马线后再右转。',
+      rule: '《道路交通安全法》第 47 条'
+    },
+    'right-turn-pedestrian-yield-fail': {
+      title: '右转未让行人',
+      why: '右转时未避让斑马线上的行人，行人拥有优先通行权。',
+      correct: '停车等待行人通过后再右转。',
+      rule: '《道路交通安全法》第 47 条'
+    },
+    'emergency-vehicle-yield': {
+      title: '避让特种车辆',
+      why: '执行紧急任务的警车、消防车、救护车、工程救险车享有优先通行权，其他车辆应当让行。',
+      correct: '靠边停车让行，待特种车辆通过后再通行。',
+      rule: '《道路交通安全法》第 53 条'
+    },
+    'emergency-vehicle-yield-fail': {
+      title: '未避让特种车辆',
+      why: '不避让执行紧急任务的特种车辆属于违章行为，特种车辆优先通行。',
+      correct: '立即靠边停车，让特种车辆先行通过。',
+      rule: '《道路交通安全法》第 53 条'
+    },
+    'grid-line-violation': {
+      title: '路口拥堵时进入网格线',
+      why: '黄色网格线区域表示禁止停车。前方路口拥堵时，不得驶入网格线区域，避免加剧拥堵。',
+      correct: '在网格线外等候，前方通畅后再驶入。',
+      rule: 'GB 5768 道路交通标线 · 网格线'
+    },
+    'yield-sign': {
+      title: '让行标志减速观察',
+      why: '倒三角让行标志要求减速慢行，观察路口情况，让优先通行车辆先行。',
+      correct: '减速观察，确认安全后通过。',
+      rule: 'GB 5768 道路交通标志 · 减速让行'
+    },
+    'yield-sign-fail': {
+      title: '未遵守让行标志',
+      why: '设有让行标志的路口，应当减速并让优先通行的车辆先行。',
+      correct: '减速停车，让优先通行车辆先行后再通过。',
+      rule: 'GB 5768 道路交通标志 · 减速让行'
+    },
+    'stop-sign-rule': {
+      title: '停车让行标志停车',
+      why: '六角红停车让行标志要求必须停车观察，确认安全后方可通行。',
+      correct: '在停止线前完全停车，左右观察确认安全后通行。',
+      rule: 'GB 5768 道路交通标志 · 停车让行'
+    },
+    'stop-sign-fail': {
+      title: '未停车让行',
+      why: '停车让行标志要求必须完全停车，不得直接通行。',
+      correct: '先完全停车，观察确认安全后再通行。',
+      rule: 'GB 5768 道路交通标志 · 停车让行'
+    },
+    'no-left-turn-sign': {
+      title: '禁止左转标志',
+      why: '设有禁止左转标志时，任何情况下不得左转。',
+      correct: '选择直行或右转，不得左转。',
+      rule: 'GB 5768 道路交通标志 · 禁止左转'
+    },
+    'no-left-turn-sign-fail': {
+      title: '违反禁止左转标志',
+      why: '在禁止左转标志下强行左转属于违章。',
+      correct: '遵守标志，不得在此路口左转。',
+      rule: 'GB 5768 道路交通标志 · 禁止左转'
+    },
+    'red-flash-stop': {
+      title: '红灯闪烁须停车',
+      why: '红灯持续闪烁等同于停车让行标志，必须停车观察，确认安全后方可通行。',
+      correct: '停车观察，确认安全后通行。',
+      rule: 'GB 5768 道路交通信号灯'
+    },
+    'red-flash-proceed': {
+      title: '红灯闪烁确认安全后通行',
+      why: '红灯闪烁时，已停车观察确认安全后可以通行。',
+      correct: '停车观察后缓慢通行。',
+      rule: 'GB 5768 道路交通信号灯'
+    },
+    'circle-red-arrow-left-go': {
+      title: '圆饼红+左转绿箭头',
+      why: '圆饼红灯亮时，左转绿箭头单独指示左转可通行。左转按箭头灯，直行/右转按圆饼灯。',
+      correct: '左转车道看绿箭头左转，直行车道等待圆饼绿灯。',
+      rule: '《道交法实施条例》第 38 条'
+    },
+    'circle-red-arrow-left-no-straight': {
+      title: '圆饼红+左转绿箭头时直行禁止',
+      why: '圆饼红灯亮时直行禁止，左转绿箭头仅允许左转方向通行。',
+      correct: '直行车辆停车等待圆饼绿灯。',
+      rule: '《道交法实施条例》第 38 条'
     }
-    // 其余 explanation key 在 Task 16-22 添加关卡时按需补充
   };
 
   const LEVELS = [
     {
       id: 'L1',
       title: '第 1 关 · 入门：绿灯行红灯停',
+      tags: ['绿灯行', '红灯停'],
       intro: '前方圆饼信号灯。红灯停，绿灯行。',
       passScore: 80,
       road: {
@@ -197,12 +533,16 @@
         centerLine: { x: 400 },
         crossHalfWidth: 60,
         intersections: [
-          { id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s'] }
+          { id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }
         ]
       },
       signals: [
         { id: 'sig-n', type: 'circle', pos: { x: 340, y: 240 },
-          program: [{ state: 'green', duration: 5000 }, { state: 'yellow', duration: 1000 }, { state: 'red', duration: 5000 }] }
+          program: [
+            { state: 'red', duration: 8000 },
+            { state: 'green', duration: 6000 },
+            { state: 'yellow', duration: 2000 }
+          ] }
       ],
       signs: [],
       decisionPoints: [
@@ -214,9 +554,9 @@
           prompt: '观察信号灯，决定通过还是停车',
           evaluate: {
             'pass-through': { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
-            'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' },
-            'left-turn':    { correct: false, deduct: 0,  explanationKey: 'unknown-action' },
-            'right-turn':   { correct: false, deduct: 0,  explanationKey: 'unknown-action' }
+            'left-turn':    { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
+            'right-turn':   { _dynamic: 'circleRightBySignal', deduct: 0,  explanationKey: 'circle-red-right-allowed' },
+            'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
           }
         }
       ],
@@ -225,6 +565,7 @@
     {
       id: 'L2',
       title: '第 2 关 · 圆饼红灯能否右转',
+      tags: ['圆饼红灯右转'],
       intro: '前方圆饼红灯，无禁右标志。你的车道允许直行或右转。',
       passScore: 80,
       road: {
@@ -235,18 +576,23 @@
       },
       signals: [
         { id: 'sig-n', type: 'circle', pos: { x: 340, y: 240 },
-          program: [{ state: 'red', duration: 99999 }] }
+          program: [
+            { state: 'red', duration: 8000 },
+            { state: 'green', duration: 6000 },
+            { state: 'yellow', duration: 2000 }
+          ] }
       ],
       signs: [],
       decisionPoints: [{
         id: 'dp-1',
         atIntersection: 'int-1',
+        signalBindings: ['sig-n'],
         trigger: { x: 400, y: 380, radius: 50 },
-        prompt: '圆饼红灯，无禁右标志。可以右转吗？',
+        prompt: '观察信号灯，决定如何通过路口',
         evaluate: {
-          'pass-through': { correct: false, deduct: 30, explanationKey: 'red-light-stop' },
-          'right-turn':   { correct: true,  deduct: 0,  explanationKey: 'circle-red-right-allowed' },
-          'left-turn':    { correct: false, deduct: 30, explanationKey: 'red-light-no-left' },
+          'pass-through': { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
+          'right-turn':   { _dynamic: 'circleRightBySignal', deduct: 0,  explanationKey: 'circle-red-right-allowed' },
+          'left-turn':    { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-no-left' },
           'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
         }
       }],
@@ -255,6 +601,7 @@
     {
       id: 'L3',
       title: '第 3 关 · 圆饼红灯左转/直行禁止',
+      tags: ['红灯禁左', '禁右标志'],
       intro: '前方圆饼红灯。直行、左转均禁止，必须停车等待。',
       passScore: 80,
       road: {
@@ -265,17 +612,22 @@
       },
       signals: [
         { id: 'sig-n', type: 'circle', pos: { x: 340, y: 240 },
-          program: [{ state: 'red', duration: 99999 }] }
+          program: [
+            { state: 'red', duration: 8000 },
+            { state: 'green', duration: 6000 },
+            { state: 'yellow', duration: 2000 }
+          ] }
       ],
-      signs: [],
+      signs: [{ type: 'no-right-on-red', pos: { x: 510, y: 195 } }],
       decisionPoints: [{
         id: 'dp-1', atIntersection: 'int-1',
+        signalBindings: ['sig-n'],
         trigger: { x: 400, y: 380, radius: 50 },
-        prompt: '圆饼红灯。直行 / 左转 / 右转 / 停车，你选哪个？',
+        prompt: '圆饼红灯+禁右标志。直行/左转/右转/停车？',
         evaluate: {
-          'pass-through': { correct: false, deduct: 30, explanationKey: 'red-light-stop' },
-          'left-turn':    { correct: false, deduct: 30, explanationKey: 'red-light-no-left' },
-          'right-turn':   { correct: true,  deduct: 0,  explanationKey: 'circle-red-right-allowed' },
+          'pass-through': { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
+          'left-turn':    { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-no-left' },
+          'right-turn':   { _dynamic: 'circleRightSignBySignal', deduct: 30, explanationKey: 'red-light-no-right-sign' },
           'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
         }
       }],
@@ -284,6 +636,7 @@
     {
       id: 'L4',
       title: '第 4 关 · 方向箭头灯',
+      tags: ['箭头灯通行'],
       intro: '前方箭头灯：直行绿，左转红。按对应箭头行驶。',
       passScore: 80,
       road: {
@@ -297,7 +650,9 @@
           program: [
             { state: 'forward-green', duration: 5000 },
             { state: 'all-red', duration: 2000 },
-            { state: 'left-green', duration: 3000 },
+            { state: 'left-green', duration: 4000 },
+            { state: 'all-red', duration: 1000 },
+            { state: 'right-green', duration: 4000 },
             { state: 'all-red', duration: 1000 }
           ] }
       ],
@@ -310,7 +665,7 @@
         evaluate: {
           'pass-through': { _dynamic: 'arrowForwardBySignal', deduct: 30, explanationKey: 'arrow-red-stop' },
           'left-turn':    { _dynamic: 'arrowLeftBySignal',    deduct: 30, explanationKey: 'arrow-red-stop' },
-          'right-turn':   { correct: false, deduct: 0,  explanationKey: 'unknown-action' },
+          'right-turn':   { _dynamic: 'arrowRightBySignal',   deduct: 30, explanationKey: 'arrow-red-stop' },
           'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
         }
       }],
@@ -319,6 +674,7 @@
     {
       id: 'L5',
       title: '第 5 关 · 右转箭头红灯（老司机陷阱）',
+      tags: ['箭头红灯右转'],
       intro: '右转箭头为红时，右转也必须停。很多人误以为"右转永远可以"。',
       passScore: 80,
       road: {
@@ -328,21 +684,30 @@
         intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
       },
       signals: [
-        { id: 'sig-arrow', type: 'arrow', pos: { x: 340, y: 240 },
+        { id: 'sig-circle', type: 'circle', pos: { x: 340, y: 240 },
           program: [
-            { state: 'right-red', duration: 99999 }
+            { state: 'green', duration: 10000 },
+            { state: 'yellow', duration: 2000 },
+            { state: 'red', duration: 4000 }
+          ] },
+        { id: 'sig-arrow', type: 'arrow', pos: { x: 460, y: 240 },
+          program: [
+            { state: 'right-red', duration: 10000 },
+            { state: 'all-red', duration: 2000 },
+            { state: 'right-green', duration: 4000 },
+            { state: 'all-red', duration: 2000 }
           ] }
       ],
       signs: [],
       decisionPoints: [{
         id: 'dp-1', atIntersection: 'int-1',
-        signalBindings: ['sig-arrow'],
+        signalBindings: ['sig-circle', 'sig-arrow'],
         trigger: { x: 400, y: 380, radius: 50 },
-        prompt: '右转箭头红灯。可以右转吗？',
+        prompt: '观察圆饼灯和箭头灯，决定如何通过',
         evaluate: {
-          'pass-through': { correct: false, deduct: 30, explanationKey: 'arrow-red-stop' },
-          'right-turn':   { _dynamic: 'arrowRightBySignal', deduct: 30, explanationKey: 'arrow-red-stop' },
-          'left-turn':    { correct: false, deduct: 30, explanationKey: 'arrow-red-stop' },
+          'pass-through': { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
+          'right-turn':   { _dynamic: 'arrowRightBySignal',  deduct: 30, explanationKey: 'arrow-red-stop' },
+          'left-turn':    { _dynamic: 'passThroughBySignal',  deduct: 30, explanationKey: 'red-light-stop' },
           'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
         }
       }],
@@ -351,30 +716,54 @@
     {
       id: 'L6',
       title: '第 6 关 · 左转待转区',
+      tags: ['左转待转区'],
       intro: '直行绿灯时进入待转区，左转绿灯时完成左转。',
       passScore: 80,
       road: {
         lanes: [{ x: 400, w: 80 }],
         centerLine: { x: 400 },
         crossHalfWidth: 60,
-        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }],
+        waitingZones: [{ type: 'left-turn-wait', pos: { x: 380, y: 300 }, w: 44, h: 50 }]
       },
       signals: [
         { id: 'sig-fwd', type: 'circle', pos: { x: 340, y: 240 },
-          program: [{ state: 'green', duration: 99999 }] },
-        { id: 'sig-left', type: 'circle', pos: { x: 460, y: 240 },
-          program: [{ state: 'red', duration: 99999 }] }
+          program: [
+            { state: 'green', duration: 12000 },
+            { state: 'yellow', duration: 2000 },
+            { state: 'red', duration: 4000 }
+          ] },
+        { id: 'sig-left', type: 'arrow', pos: { x: 460, y: 240 },
+          program: [
+            { state: 'left-red', duration: 6000 },
+            { state: 'left-green', duration: 6000 },
+            { state: 'left-red', duration: 6000 }
+          ] }
       ],
-      signs: [],
+      signs: [{ type: 'left-turn-waiting-zone', pos: { x: 510, y: 210 } }],
       decisionPoints: [
         {
           id: 'dp-enter', atIntersection: 'int-1',
+          signalBindings: ['sig-fwd'],
           trigger: { x: 400, y: 380, radius: 50 },
-          prompt: '直行绿、左转红。要左转的话，怎么办？',
+          prompt: '观察信号灯，决定如何通过路口',
           evaluate: {
-            'pass-through': { correct: true,  deduct: 0,  explanationKey: 'green-light-go' },
-            'left-turn':    { correct: true,  deduct: 0,  explanationKey: 'waiting-zone-enter' },
-            'right-turn':   { correct: false, deduct: 0,  explanationKey: 'unknown-action' },
+            'pass-through': { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
+            'left-turn':    { _dynamic: 'waitingZoneEnterBySignal', deduct: 30, explanationKey: 'waiting-zone-premature' },
+            'right-turn':   { _dynamic: 'circleRightBySignal', deduct: 0,  explanationKey: 'circle-red-right-allowed' },
+            'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
+          }
+        },
+        {
+          id: 'dp-turn', atIntersection: 'int-1',
+          signalBindings: ['sig-left'],
+          waitForGreen: true,
+          trigger: { x: 400, y: 310, radius: 30 },
+          prompt: '左转绿灯亮了，可以左转通过！',
+          evaluate: {
+            'pass-through': { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
+            'left-turn':    { _dynamic: 'arrowLeftBySignal', deduct: 30, explanationKey: 'arrow-red-stop' },
+            'right-turn':   { _dynamic: 'circleRightBySignal', deduct: 0,  explanationKey: 'circle-red-right-allowed' },
             'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
           }
         }
@@ -384,7 +773,8 @@
     {
       id: 'L7',
       title: '第 7 关 · 黄灯闪烁',
-      intro: '前方黄灯。能停就停，已过线则继续。',
+      tags: ['黄灯闪烁'],
+      intro: '黄灯闪烁，未过线须停车；已过线或右转可通行。',
       passScore: 80,
       road: {
         lanes: [{ x: 400, w: 80 }],
@@ -394,25 +784,45 @@
       },
       signals: [
         { id: 'sig-y', type: 'circle', pos: { x: 340, y: 240 },
-          program: [{ state: 'yellow', duration: 99999 }] }
+          program: [
+            { state: 'yellow-flash', duration: 8000 },
+            { state: 'green', duration: 6000 },
+            { state: 'yellow-flash', duration: 8000 }
+          ] }
       ],
       signs: [],
-      decisionPoints: [{
-        id: 'dp-1', atIntersection: 'int-1',
-        trigger: { x: 400, y: 380, radius: 50 },
-        prompt: '黄灯亮。能停就停。',
-        evaluate: {
-          'pass-through': { correct: false, deduct: 30, explanationKey: 'yellow-stop' },
-          'left-turn':    { correct: false, deduct: 30, explanationKey: 'yellow-stop' },
-          'right-turn':   { correct: false, deduct: 30, explanationKey: 'yellow-stop' },
-          'stop':         { correct: true,  deduct: 0,  explanationKey: 'yellow-stop' }
+      decisionPoints: [
+        {
+          id: 'dp-stop', atIntersection: 'int-1',
+          signalBindings: ['sig-y'],
+          trigger: { x: 400, y: 380, radius: 50 },
+          prompt: '观察信号灯，决定如何通过路口',
+          evaluate: {
+            'pass-through': { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'yellow-stop' },
+            'left-turn':    { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'yellow-left-wait' },
+            'right-turn':   { _dynamic: 'circleRightBySignal', deduct: 0,  explanationKey: 'yellow-right-allowed' },
+            'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
+          }
+        },
+        {
+          id: 'dp-pass', atIntersection: 'int-1',
+          signalBindings: ['sig-y'],
+          trigger: { x: 400, y: 310, radius: 30 },
+          prompt: '已过停止线，观察信号灯决定通过',
+          evaluate: {
+            'pass-through': { correct: true,  deduct: 0,  explanationKey: 'yellow-pass' },
+            'left-turn':    { correct: true,  deduct: 0,  explanationKey: 'yellow-left-wait' },
+            'right-turn':   { _dynamic: 'circleRightBySignal', deduct: 0,  explanationKey: 'yellow-right-allowed' },
+            'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
+          }
         }
-      }],
+      ],
       completion: { intersections: 1 }
     },
     {
       id: 'L8',
       title: '第 8 关 · 综合考核',
+      tags: ['综合考核'],
       intro: '多个路口，混合所有信号灯类型。小心应对。',
       passScore: 80,
       road: {
@@ -420,56 +830,1226 @@
         centerLine: { x: 400 },
         crossHalfWidth: 60,
         intersections: [
-          { id: 'int-1', center: { x: 400, y: 450 }, roads: ['n','s'] },
+          { id: 'int-1', center: { x: 400, y: 450 }, roads: ['n','s','e','w'] },
           { id: 'int-2', center: { x: 400, y: 250 }, roads: ['n','s','e','w'] }
         ]
       },
       signals: [
         { id: 'sig-1', type: 'circle', pos: { x: 340, y: 390 },
-          program: [{ state: 'green', duration: 99999 }] },
+          program: [
+            { state: 'green', duration: 8000 },
+            { state: 'yellow', duration: 2000 },
+            { state: 'red', duration: 5000 }
+          ] },
         { id: 'sig-2', type: 'arrow', pos: { x: 340, y: 190 },
-          program: [{ state: 'right-red', duration: 99999 }] }
+          program: [
+            { state: 'right-red', duration: 8000 },
+            { state: 'all-red', duration: 2000 },
+            { state: 'right-green', duration: 5000 },
+            { state: 'all-red', duration: 2000 }
+          ] },
+        { id: 'sig-2-left', type: 'arrow', pos: { x: 460, y: 190 },
+          program: [
+            { state: 'left-green', duration: 8000 },
+            { state: 'all-red', duration: 2000 },
+            { state: 'left-red', duration: 5000 },
+            { state: 'all-red', duration: 2000 }
+          ] }
       ],
       signs: [],
       decisionPoints: [
         {
           id: 'dp-1', atIntersection: 'int-1',
+          signalBindings: ['sig-1'],
           trigger: { x: 400, y: 530, radius: 50 },
-          prompt: '路口 1：绿灯。可以直行。',
+          prompt: '路口 1：观察圆饼信号灯',
           evaluate: {
-            'pass-through': { correct: true,  deduct: 0,  explanationKey: 'green-light-go' },
-            'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' },
-            'left-turn':    { correct: false, deduct: 30, explanationKey: 'unknown-action' },
-            'right-turn':   { correct: false, deduct: 0,  explanationKey: 'unknown-action' }
+            'pass-through': { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
+            'left-turn':    { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
+            'right-turn':   { _dynamic: 'circleRightBySignal', deduct: 0,  explanationKey: 'circle-red-right-allowed' },
+            'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
           }
         },
         {
           id: 'dp-2', atIntersection: 'int-2',
-          signalBindings: ['sig-2'],
+          signalBindings: ['sig-2', 'sig-2-left'],
           trigger: { x: 400, y: 330, radius: 50 },
-          prompt: '路口 2：右转箭头红。能右转吗？',
+          prompt: '路口 2：观察箭头信号灯',
           evaluate: {
-            'pass-through': { correct: true,  deduct: 0,  explanationKey: 'arrow-green-go' },
+            'pass-through': { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
             'right-turn':   { _dynamic: 'arrowRightBySignal', deduct: 30, explanationKey: 'arrow-red-stop' },
-            'left-turn':    { correct: false, deduct: 30, explanationKey: 'arrow-red-stop' },
+            'left-turn':    { _dynamic: 'arrowLeftBySignal',  deduct: 30, explanationKey: 'arrow-red-stop' },
             'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
           }
         }
       ],
       completion: { intersections: 2 }
+    },
+    {
+      id: 'L9',
+      title: '第 9 关 · 多车道：正确车道通行',
+      tags: ['多车道', '变道'],
+      intro: '前方三车道：左转/直行/右转。变道到正确车道后再选择方向。',
+      passScore: 80,
+      road: {
+        lanes: [
+          { x: 340, w: 60, type: 'left-turn' },
+          { x: 400, w: 60, type: 'forward' },
+          { x: 460, w: 60, type: 'right-turn' }
+        ],
+        centerLine: null,
+        laneDividers: true,
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+      },
+      signals: [
+        { id: 'sig-n', type: 'circle', pos: { x: 370, y: 240 },
+          program: [
+            { state: 'green', duration: 12000 },
+            { state: 'yellow', duration: 2000 },
+            { state: 'red', duration: 6000 }
+          ] }
+      ],
+      signs: [],
+      decisionPoints: [{
+        id: 'dp-1',
+        atIntersection: 'int-1',
+        signalBindings: ['sig-n'],
+        trigger: { x: 400, y: 380, radius: 80 },
+        prompt: '绿灯。先变到正确车道，再选择方向！',
+        evaluate: {
+          'pass-through': { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
+          'left-turn':    { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
+          'right-turn':   { _dynamic: 'circleRightBySignal', deduct: 0,  explanationKey: 'circle-red-right-allowed' },
+          'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
+        }
+      }],
+      completion: { intersections: 1 }
+    },
+    {
+      id: 'L10',
+      title: '第 10 关 · 多车道+箭头灯：双重校验',
+      tags: ['多车道', '箭头灯'],
+      intro: '三车道+方向箭头灯。车道和信号灯都必须匹配才能通行。',
+      passScore: 80,
+      road: {
+        lanes: [
+          { x: 340, w: 60, type: 'left-turn' },
+          { x: 400, w: 60, type: 'forward' },
+          { x: 460, w: 60, type: 'right-turn' }
+        ],
+        centerLine: null,
+        laneDividers: true,
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+      },
+      signals: [
+        { id: 'sig-arrow', type: 'arrow', pos: { x: 370, y: 240 },
+          program: [
+            { state: 'forward-green', duration: 6000 },
+            { state: 'all-red', duration: 2000 },
+            { state: 'left-green', duration: 5000 },
+            { state: 'all-red', duration: 2000 },
+            { state: 'right-green', duration: 5000 },
+            { state: 'all-red', duration: 2000 }
+          ] }
+      ],
+      signs: [],
+      decisionPoints: [{
+        id: 'dp-1',
+        atIntersection: 'int-1',
+        signalBindings: ['sig-arrow'],
+        trigger: { x: 400, y: 380, radius: 80 },
+        prompt: '观察箭头灯。变到正确车道再通行！',
+        evaluate: {
+          'pass-through': { _dynamic: 'arrowForwardBySignal', deduct: 30, explanationKey: 'arrow-red-stop' },
+          'left-turn':    { _dynamic: 'arrowLeftBySignal',    deduct: 30, explanationKey: 'arrow-red-stop' },
+          'right-turn':   { _dynamic: 'arrowRightBySignal',   deduct: 30, explanationKey: 'arrow-red-stop' },
+          'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
+        }
+      }],
+      completion: { intersections: 1 }
+    },
+    {
+      id: 'L11',
+      title: '第 11 关 · 转弯等待区',
+      tags: ['左转待转区', '右转等待区'],
+      intro: '直行绿灯+转弯箭头红灯时，进入路口等待区；箭头绿灯后完成转弯。',
+      passScore: 80,
+      road: {
+        lanes: [{ x: 400, w: 80 }],
+        centerLine: { x: 400 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }],
+        waitingZones: []
+      },
+      signals: [],
+      signs: [],
+      decisionPoints: [],
+      _randomWaitingZone: true,
+      completion: { intersections: 1 }
+    },
+    {
+      id: 'L12',
+      title: '第 12 关 · 黄灯转弯等待区',
+      tags: ['黄灯等待区'],
+      intro: '黄灯闪烁时，已过线车辆进入等待区完成转弯。',
+      passScore: 80,
+      road: {
+        lanes: [{ x: 400, w: 80 }],
+        centerLine: { x: 400 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }],
+        waitingZones: [{ type: 'yellow-turn-wait', pos: { x: 400, y: 295 }, w: 48, h: 44 }]
+      },
+      signals: [
+        { id: 'sig-y', type: 'circle', pos: { x: 340, y: 240 },
+          program: [
+            { state: 'yellow-flash', duration: 10000 },
+            { state: 'green', duration: 6000 },
+            { state: 'yellow-flash', duration: 10000 }
+          ] }
+      ],
+      signs: [],
+      decisionPoints: [
+        {
+          id: 'dp-stop', atIntersection: 'int-1',
+          signalBindings: ['sig-y'],
+          trigger: { x: 400, y: 380, radius: 50 },
+          prompt: '黄灯闪烁，尚未过线。怎么办？',
+          evaluate: {
+            'pass-through': { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'yellow-stop' },
+            'left-turn':    { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'yellow-left-wait' },
+            'right-turn':   { _dynamic: 'circleRightBySignal', deduct: 0,  explanationKey: 'yellow-right-allowed' },
+            'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
+          }
+        },
+        {
+          id: 'dp-wait', atIntersection: 'int-1',
+          signalBindings: ['sig-y'],
+          trigger: { x: 400, y: 310, radius: 30 },
+          prompt: '已过停止线，黄灯闪烁。可进入等待区转弯！',
+          evaluate: {
+            'pass-through': { _dynamic: 'alreadyCrossedProceedBySignal', deduct: 0,  explanationKey: 'yellow-pass' },
+            'left-turn':    { _dynamic: 'alreadyCrossedProceedBySignal', deduct: 0,  explanationKey: 'yellow-turn-waiting-zone' },
+            'right-turn':   { _dynamic: 'alreadyCrossedProceedBySignal', deduct: 0,  explanationKey: 'yellow-turn-waiting-zone' },
+            'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
+          }
+        }
+      ],
+      completion: { intersections: 1 }
+    },
+    {
+      id: 'L13',
+      title: '第 13 关 · 路口掉头',
+      tags: ['路口掉头'],
+      intro: '圆饼绿灯或左转绿灯时，在左转车道可掉头。',
+      passScore: 80,
+      road: {
+        lanes: [
+          { x: 370, w: 40, type: 'left-turn' },
+          { x: 410, w: 40, type: 'forward' },
+          { x: 450, w: 40, type: 'right-turn' }
+        ],
+        laneDividers: true,
+        centerLine: { x: 400 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+      },
+      signals: [
+        { id: 'sig-left', type: 'arrow', pos: { x: 340, y: 240 },
+          program: [
+            { state: 'left-red', duration: 6000 },
+            { state: 'left-green', duration: 6000 }
+          ] },
+        { id: 'sig-circle', type: 'circle', pos: { x: 400, y: 240 },
+          program: [
+            { state: 'green', duration: 6000 },
+            { state: 'yellow', duration: 2000 },
+            { state: 'red', duration: 6000 }
+          ] }
+      ],
+      signs: [],
+      decisionPoints: [
+        {
+          id: 'dp-1', atIntersection: 'int-1',
+          signalBindings: ['sig-left', 'sig-circle'],
+          trigger: { x: 410, y: 380, radius: 80 },
+          prompt: '前方路口，是否掉头？',
+          evaluate: {
+            'pass-through': { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
+            'left-turn':    { _dynamic: 'arrowLeftBySignal', deduct: 30, explanationKey: 'arrow-red-stop' },
+            'right-turn':   { _dynamic: 'circleRightBySignal', deduct: 0, explanationKey: 'circle-red-right-allowed' },
+            'u-turn':        { _dynamic: 'uTurnBySignal', deduct: 30, explanationKey: 'u-turn-red-light' },
+            'stop':          { correct: true, deduct: 0, explanationKey: 'safe-stop' }
+          }
+        }
+      ],
+      completion: { intersections: 1 }
+    },
+    {
+      id: 'L14',
+      title: '第 14 关 · 禁止掉头',
+      tags: ['禁止掉头'],
+      intro: '设有禁止掉头标志的路口，任何信号下均不得掉头。',
+      passScore: 80,
+      road: {
+        lanes: [
+          { x: 370, w: 40, type: 'left-turn' },
+          { x: 410, w: 40, type: 'forward' },
+          { x: 450, w: 40, type: 'right-turn' }
+        ],
+        laneDividers: true,
+        centerLine: { x: 400 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+      },
+      signals: [
+        { id: 'sig-left', type: 'arrow', pos: { x: 340, y: 240 },
+          program: [
+            { state: 'left-red', duration: 6000 },
+            { state: 'left-green', duration: 6000 }
+          ] },
+        { id: 'sig-circle', type: 'circle', pos: { x: 400, y: 240 },
+          program: [
+            { state: 'green', duration: 6000 },
+            { state: 'yellow', duration: 2000 },
+            { state: 'red', duration: 6000 }
+          ] }
+      ],
+      signs: [{ type: 'no-u-turn', pos: { x: 510, y: 210 } }],
+      decisionPoints: [
+        {
+          id: 'dp-1', atIntersection: 'int-1',
+          signalBindings: ['sig-left', 'sig-circle'],
+          trigger: { x: 410, y: 380, radius: 80 },
+          prompt: '前方路口有禁止掉头标志。怎么办？',
+          evaluate: {
+            'pass-through': { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
+            'left-turn':    { _dynamic: 'arrowLeftBySignal', deduct: 30, explanationKey: 'arrow-red-stop' },
+            'right-turn':   { _dynamic: 'circleRightBySignal', deduct: 0, explanationKey: 'circle-red-right-allowed' },
+            'u-turn':        { _dynamic: 'uTurnBySign', deduct: 30, explanationKey: 'u-turn-no-sign' },
+            'stop':          { correct: true, deduct: 0, explanationKey: 'safe-stop' }
+          }
+        }
+      ],
+      completion: { intersections: 1 }
+    },
+    // ===== L15：信号灯故障 =====
+    {
+      id: 'L15', title: '第 15 关 · 信号灯故障', tags: ['信号灯故障', '减速慢行'],
+      intro: '前方信号灯全灭。减速观察，确认安全后通过。',
+      passScore: 80,
+      road: {
+        lanes: [{ x: 400, w: 80 }],
+        centerLine: { x: 400 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+      },
+      signals: [
+        { id: 'sig-n', type: 'circle', pos: { x: 340, y: 240 },
+          program: [
+            { state: 'all-dark', duration: 6000 },
+            { state: 'green', duration: 4000 },
+            { state: 'all-dark', duration: 6000 }
+          ] }
+      ],
+      signs: [],
+      decisionPoints: [
+        {
+          id: 'dp-slow', atIntersection: 'int-1',
+          signalBindings: ['sig-n'],
+          trigger: { x: 400, y: 380, radius: 50 },
+          prompt: '信号灯全灭！减速观察，确认安全后通过。',
+          evaluate: {
+            'stop':         { _dynamic: 'malfunctionSlowBySignal', deduct: 0, explanationKey: 'signal-malfunction-stop' },
+            'pass-through': { _dynamic: 'malfunctionBySignal', deduct: 30, explanationKey: 'signal-malfunction-no-slow' },
+            'left-turn':    { _dynamic: 'malfunctionBySignal', deduct: 30, explanationKey: 'signal-malfunction-no-slow' },
+            'right-turn':   { _dynamic: 'malfunctionBySignal', deduct: 0, explanationKey: 'circle-red-right-allowed' }
+          }
+        },
+        {
+          id: 'dp-proceed', atIntersection: 'int-1',
+          signalBindings: ['sig-n'],
+          trigger: { x: 400, y: 310, radius: 40 },
+          prompt: '已减速观察确认安全，选择通行方向',
+          evaluate: {
+            'pass-through': { _dynamic: 'malfunctionProceedBySignal', deduct: 0, explanationKey: 'signal-malfunction-proceed' },
+            'left-turn':    { _dynamic: 'malfunctionProceedBySignal', deduct: 0, explanationKey: 'signal-malfunction-proceed' },
+            'right-turn':   { _dynamic: 'malfunctionProceedBySignal', deduct: 0, explanationKey: 'signal-malfunction-proceed' },
+            'stop':         { correct: true, deduct: 0, explanationKey: 'safe-stop' }
+          }
+        }
+      ],
+      completion: { intersections: 1 }
+    },
+    // ===== L16：可变车道 =====
+    {
+      id: 'L16', title: '第 16 关 · 可变车道', tags: ['可变车道', 'LED方向指示'],
+      intro: '中间车道为可变车道，上方LED指示器决定车道方向。观察指示器选择正确车道通行。',
+      passScore: 80,
+      _randomVariableLane: true,
+      road: {
+        lanes: [
+          { x: 340, w: 60, type: 'left-turn' },
+          { x: 400, w: 60, type: 'variable' },
+          { x: 460, w: 60, type: 'right-turn' }
+        ],
+        centerLine: null,
+        laneDividers: true,
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }],
+        variableLaneIndicators: [
+          { laneIdx: 1, pos: { x: 400, y: 180 },
+            program: [
+              { direction: 'left', duration: 8000 },
+              { direction: 'forward', duration: 8000 }
+            ] }
+        ]
+      },
+      signals: [
+        { id: 'sig-n', type: 'circle', pos: { x: 370, y: 240 },
+          program: [
+            { state: 'green', duration: 12000 },
+            { state: 'yellow', duration: 2000 },
+            { state: 'red', duration: 6000 }
+          ] }
+      ],
+      signs: [],
+      decisionPoints: [{
+        id: 'dp-1', atIntersection: 'int-1',
+        signalBindings: ['sig-n'],
+        trigger: { x: 400, y: 380, radius: 80 },
+        prompt: '观察可变车道LED指示器！变到正确车道再通行。',
+        evaluate: {
+          'pass-through': { _dynamic: 'variableLaneByIndicator', deduct: 30, explanationKey: 'variable-lane-wrong-direction' },
+          'left-turn':    { _dynamic: 'variableLaneByIndicator', deduct: 30, explanationKey: 'variable-lane-wrong-direction' },
+          'right-turn':   { _dynamic: 'circleRightBySignal', deduct: 0, explanationKey: 'circle-red-right-allowed' },
+          'stop':         { correct: true, deduct: 0, explanationKey: 'safe-stop' }
+        }
+      }],
+      completion: { intersections: 1 }
+    },
+    // ===== L17：铁道路口 =====
+    {
+      id: 'L17', title: '第 17 关 · 铁道路口', tags: ['铁道路口', '停车等待'],
+      intro: '前方有铁道路口。红灯闪烁/栏杆放下时必须停车，栏杆抬起后通行。',
+      passScore: 80,
+      road: {
+        lanes: [{ x: 400, w: 80 }],
+        centerLine: { x: 400 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }],
+        railroadCrossings: [
+          { id: 'rr-1', pos: { x: 400, y: 420 },
+            program: [
+              { state: 'barrier-down', duration: 6000 },
+              { state: 'barrier-up', duration: 8000 },
+              { state: 'barrier-down', duration: 6000 }
+            ] }
+        ]
+      },
+      signals: [
+        { id: 'sig-n', type: 'circle', pos: { x: 340, y: 240 },
+          program: [
+            { state: 'green', duration: 10000 },
+            { state: 'yellow', duration: 2000 },
+            { state: 'red', duration: 8000 }
+          ] }
+      ],
+      signs: [],
+      decisionPoints: [
+        {
+          id: 'dp-railroad', atIntersection: 'int-1',
+          signalBindings: ['sig-n'],
+          trigger: { x: 400, y: 450, radius: 40 },
+          prompt: '前方铁道路口！观察栏杆和信号灯。',
+          evaluate: {
+            'pass-through': { _dynamic: 'railroadCrossingByBarrier', deduct: 50, explanationKey: 'railroad-crossing-violation' },
+            'left-turn':    { _dynamic: 'railroadCrossingByBarrier', deduct: 50, explanationKey: 'railroad-crossing-violation' },
+            'right-turn':   { _dynamic: 'railroadCrossingByBarrier', deduct: 50, explanationKey: 'railroad-crossing-violation' },
+            'stop':         { _dynamic: 'railroadCrossingStopByBarrier', deduct: 0, explanationKey: 'railroad-crossing-stop' }
+          }
+        },
+        {
+          id: 'dp-intersection', atIntersection: 'int-1',
+          signalBindings: ['sig-n'],
+          trigger: { x: 400, y: 380, radius: 80 },
+          prompt: '通过铁道路口后，观察路口信号灯通行。',
+          evaluate: {
+            'pass-through': { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
+            'left-turn':    { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-no-left' },
+            'right-turn':   { _dynamic: 'circleRightBySignal', deduct: 0, explanationKey: 'circle-red-right-allowed' },
+            'stop':         { correct: true, deduct: 0, explanationKey: 'safe-stop' }
+          }
+        }
+      ],
+      completion: { intersections: 1 }
+    },
+    // ===== L18：压线违章 =====
+    {
+      id: 'L18', title: '第 18 关 · 压线违章', tags: ['实线', '导流线', '车道保持'],
+      intro: '严禁压实线、驶入导流区域。保持车道，按路面标线行驶。',
+      passScore: 80,
+      _continuousEval: true,
+      road: {
+        lanes: [
+          { x: 360, w: 60, type: 'left-turn' },
+          { x: 420, w: 60, type: 'forward' },
+          { x: 480, w: 60, type: 'right-turn' }
+        ],
+        centerLine: null,
+        laneDividers: false,
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 420, y: 300 }, roads: ['n','s','e','w'] }],
+        solidLines: [
+          { x1: 390, x2: 390, y1: 380, y2: 540, width: 4 },
+          { x1: 450, x2: 450, y1: 380, y2: 540, width: 4 }
+        ],
+        guideAreas: [
+          { type: 'v-guide', points: [{ x: 375, y: 380 }, { x: 390, y: 355 }, { x: 405, y: 380 }], fill: '#ddd' },
+          { type: 'v-guide', points: [{ x: 435, y: 380 }, { x: 450, y: 355 }, { x: 465, y: 380 }], fill: '#ddd' }
+        ]
+      },
+      signals: [
+        { id: 'sig-n', type: 'circle', pos: { x: 390, y: 240 },
+          program: [
+            { state: 'green', duration: 10000 },
+            { state: 'yellow', duration: 2000 },
+            { state: 'red', duration: 6000 }
+          ] }
+      ],
+      signs: [],
+      decisionPoints: [{
+        id: 'dp-1', atIntersection: 'int-1',
+        signalBindings: ['sig-n'],
+        trigger: { x: 420, y: 380, radius: 80 },
+        prompt: '保持车道，观察信号灯通行。',
+        evaluate: {
+          'pass-through': { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
+          'left-turn':    { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
+          'right-turn':   { _dynamic: 'circleRightBySignal', deduct: 0, explanationKey: 'circle-red-right-allowed' },
+          'stop':         { correct: true, deduct: 0, explanationKey: 'safe-stop' }
+        }
+      }],
+      completion: { intersections: 1 }
+    },
+    // ===== L19：转弯让直行 =====
+    {
+      id: 'L19', title: '第 19 关 · 转弯让直行', tags: ['转弯让直行', '左转让直行'],
+      intro: '绿灯亮时左转，必须让对向直行车辆先行。',
+      passScore: 80,
+      road: {
+        lanes: [
+          { x: 370, w: 40, type: 'left-turn' },
+          { x: 410, w: 40, type: 'forward' },
+          { x: 450, w: 40, type: 'right-turn' }
+        ],
+        laneDividers: true,
+        centerLine: { x: 430 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+      },
+      signals: [
+        { id: 'sig-n', type: 'circle', pos: { x: 370, y: 240 },
+          program: [
+            { state: 'red', duration: 4000 },
+            { state: 'green', duration: 10000 },
+            { state: 'yellow', duration: 2000 }
+          ] }
+      ],
+      signs: [],
+      npcs: [
+        {
+          id: 'npc-1',
+          spawnCondition: { type: 'signal-state', signalId: 'sig-n', state: 'green' },
+          spawnDelay: 0,
+          startPos: { x: 450, y: 150, heading: Math.PI },
+          speed: 200,
+          color: '#3b7dd8',
+          label: '对向直行',
+          pathScript: 'south-straight'
+        }
+      ],
+      decisionPoints: [{
+        id: 'dp-yield',
+        atIntersection: 'int-1',
+        signalBindings: ['sig-n'],
+        waitForGreen: true,
+        trigger: { x: 400, y: 380, radius: 80 },
+        prompt: '绿灯亮了，你打算左转。注意对向直行车辆！',
+        evaluate: {
+          'left-turn':    { _dynamic: 'yieldToStraightOnTurn', deduct: 30, explanationKey: 'left-turn-yield-straight-fail' },
+          'pass-through': { _dynamic: 'passThroughBySignal', deduct: 0, explanationKey: 'green-light-go' },
+          'right-turn':   { _dynamic: 'circleRightBySignal', deduct: 0, explanationKey: 'circle-red-right-allowed' },
+          'stop':         { _dynamic: 'yieldToStraightOnTurn', deduct: 0, explanationKey: 'left-turn-yield-straight' },
+          'u-turn':       { _dynamic: 'yieldToStraightOnTurn', deduct: 30, explanationKey: 'left-turn-yield-straight-fail' }
+        }
+      }],
+      completion: { intersections: 1 }
+    },
+    // ===== L20：右转让左转 =====
+    {
+      id: 'L20', title: '第 20 关 · 右转让左转', tags: ['右转让左转'],
+      intro: '绿灯亮时，右转车辆须让对向左转车辆先行。',
+      passScore: 80,
+      road: {
+        lanes: [
+          { x: 370, w: 40, type: 'left-turn' },
+          { x: 410, w: 40, type: 'forward' },
+          { x: 450, w: 40, type: 'right-turn' }
+        ],
+        laneDividers: true,
+        centerLine: { x: 430 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+      },
+      signals: [
+        { id: 'sig-n', type: 'circle', pos: { x: 370, y: 240 },
+          program: [
+            { state: 'red', duration: 4000 },
+            { state: 'green', duration: 10000 },
+            { state: 'yellow', duration: 2000 }
+          ] }
+      ],
+      signs: [],
+      npcs: [
+        {
+          id: 'npc-1',
+          spawnCondition: { type: 'signal-state', signalId: 'sig-n', state: 'green' },
+          spawnDelay: 0,
+          startPos: { x: 450, y: 150, heading: Math.PI },
+          speed: 180,
+          color: '#e6a817',
+          label: '对向左转',
+          pathScript: 'south-left-turn'
+        }
+      ],
+      decisionPoints: [{
+        id: 'dp-yield',
+        atIntersection: 'int-1',
+        signalBindings: ['sig-n'],
+        waitForGreen: true,
+        trigger: { x: 400, y: 380, radius: 80 },
+        prompt: '绿灯亮了，你打算右转。注意对向左转车辆！',
+        evaluate: {
+          'right-turn':    { _dynamic: 'rightYieldLeftTurn', deduct: 30, explanationKey: 'right-yield-left-turn-fail' },
+          'pass-through':  { _dynamic: 'passThroughBySignal', deduct: 0, explanationKey: 'green-light-go' },
+          'left-turn':     { _dynamic: 'passThroughBySignal', deduct: 0, explanationKey: 'green-light-go' },
+          'stop':          { _dynamic: 'rightYieldLeftTurn', deduct: 0, explanationKey: 'right-yield-left-turn' },
+          'u-turn':        { _dynamic: 'uTurnBySignal', deduct: 30, explanationKey: 'u-turn-red-light' }
+        }
+      }],
+      completion: { intersections: 1 }
+    },
+    // ===== L21：让右方来车先行 =====
+    {
+      id: 'L21', title: '第 21 关 · 让右方来车先行', tags: ['让右方来车', '无信号路口'],
+      intro: '无信号路口，右方来车有优先通行权。必须让右方车辆先行。',
+      passScore: 80,
+      road: {
+        lanes: [
+          { x: 370, w: 40, type: 'left-turn' },
+          { x: 410, w: 40, type: 'forward' },
+          { x: 450, w: 40, type: 'right-turn' }
+        ],
+        laneDividers: true,
+        centerLine: { x: 430 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+      },
+      signals: [],
+      signs: [],
+      npcs: [
+        {
+          id: 'npc-1',
+          spawnCondition: { type: 'always' },
+          spawnDelay: 0,
+          startPos: { x: 520, y: 330, heading: -Math.PI / 2 },
+          speed: 180,
+          color: '#d84315',
+          label: '右方来车',
+          pathScript: 'east-straight'
+        }
+      ],
+      decisionPoints: [{
+        id: 'dp-yield',
+        atIntersection: 'int-1',
+        trigger: { x: 400, y: 380, radius: 80 },
+        prompt: '无信号路口！注意右方来车，谁该先行？',
+        evaluate: {
+          'pass-through': { _dynamic: 'yieldToRightSide', deduct: 30, explanationKey: 'yield-to-right-fail' },
+          'left-turn':   { _dynamic: 'yieldToRightSide', deduct: 30, explanationKey: 'yield-to-right-fail' },
+          'right-turn':   { _dynamic: 'yieldToRightSide', deduct: 30, explanationKey: 'yield-to-right-fail' },
+          'stop':         { _dynamic: 'yieldToRightSide', deduct: 0, explanationKey: 'yield-to-right' },
+          'u-turn':       { _dynamic: 'yieldToRightSide', deduct: 30, explanationKey: 'yield-to-right-fail' }
+        }
+      }],
+      completion: { intersections: 1 }
+    },
+    // ===== L22：避让行人(斑马线) =====
+    {
+      id: 'L22', title: '第 22 关 · 避让行人', tags: ['避让行人', '斑马线'],
+      intro: '前方路口有行人正在通过斑马线，必须停车让行。',
+      passScore: 80,
+      road: {
+        lanes: [
+          { x: 370, w: 40, type: 'left-turn' },
+          { x: 410, w: 40, type: 'forward' },
+          { x: 450, w: 40, type: 'right-turn' }
+        ],
+        laneDividers: true,
+        centerLine: { x: 430 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }],
+        crosswalks: [
+          { x: 400, y: 240, w: 20, h: 40 },
+          { x: 400, y: 360, w: 20, h: 40 }
+        ]
+      },
+      signals: [
+        { id: 'sig-n', type: 'circle', pos: { x: 370, y: 240 },
+          program: [
+            { state: 'red', duration: 4000 },
+            { state: 'green', duration: 10000 },
+            { state: 'yellow', duration: 2000 }
+          ] }
+      ],
+      signs: [],
+      npcs: [
+        {
+          id: 'ped-1',
+          category: 'pedestrian',
+          spawnCondition: { type: 'signal-state', signalId: 'sig-n', state: 'green' },
+          spawnDelay: 500,
+          startPos: { x: 460, y: 295, heading: Math.PI },
+          speed: 60,
+          color: '#e67e22',
+          label: '行人',
+          pathScript: 'pedestrian-west'
+        }
+      ],
+      decisionPoints: [{
+        id: 'dp-yield',
+        atIntersection: 'int-1',
+        signalBindings: ['sig-n'],
+        waitForGreen: true,
+        trigger: { x: 400, y: 380, radius: 80 },
+        prompt: '前方路口，注意斑马线上的行人！',
+        evaluate: {
+          'pass-through': { _dynamic: 'pedestrianYield', deduct: 30, explanationKey: 'pedestrian-yield-fail' },
+          'left-turn':    { _dynamic: 'pedestrianYield', deduct: 30, explanationKey: 'pedestrian-yield-fail' },
+          'right-turn':   { _dynamic: 'pedestrianYield', deduct: 30, explanationKey: 'pedestrian-yield-fail' },
+          'stop':         { _dynamic: 'pedestrianYield', deduct: 0, explanationKey: 'pedestrian-yield' },
+          'u-turn':       { _dynamic: 'pedestrianYield', deduct: 30, explanationKey: 'pedestrian-yield-fail' }
+        }
+      }],
+      completion: { intersections: 1 }
+    },
+    // ===== L23：圆饼红+左转绿箭头 =====
+    {
+      id: 'L23', title: '第 23 关 · 圆饼红+左转绿箭头', tags: ['一灯双显', '箭头灯优先'],
+      intro: '前方圆饼红灯，同时左转绿箭头亮起。左转按箭头灯走，直行须等圆饼绿灯。',
+      passScore: 80,
+      road: {
+        lanes: [
+          { x: 370, w: 40, type: 'left-turn' },
+          { x: 410, w: 40, type: 'forward' },
+          { x: 450, w: 40, type: 'right-turn' }
+        ],
+        laneDividers: true,
+        centerLine: { x: 430 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+      },
+      signals: [
+        { id: 'sig-circle', type: 'circle', pos: { x: 340, y: 240 },
+          program: [
+            { state: 'red', duration: 6000 },
+            { state: 'green', duration: 6000 },
+            { state: 'yellow', duration: 2000 }
+          ] },
+        { id: 'sig-arrow', type: 'arrow', pos: { x: 460, y: 240 },
+          program: [
+            { state: 'left-green', duration: 6000 },
+            { state: 'all-red', duration: 2000 },
+            { state: 'forward-green', duration: 4000 },
+            { state: 'all-red', duration: 2000 }
+          ] }
+      ],
+      signs: [],
+      decisionPoints: [{
+        id: 'dp-1', atIntersection: 'int-1',
+        signalBindings: ['sig-circle', 'sig-arrow'],
+        trigger: { x: 400, y: 380, radius: 80 },
+        prompt: '圆饼红灯+左转绿箭头！注意两个灯的指示。',
+        evaluate: {
+          'left-turn':    { _dynamic: 'circleRedArrowLeft', deduct: 30, explanationKey: 'arrow-red-stop' },
+          'pass-through': { _dynamic: 'circleRedArrowLeft', deduct: 30, explanationKey: 'circle-red-arrow-left-no-straight' },
+          'right-turn':   { _dynamic: 'circleRedArrowLeft', deduct: 0, explanationKey: 'circle-red-right-allowed' },
+          'stop':         { correct: true, deduct: 0, explanationKey: 'safe-stop' }
+        }
+      }],
+      completion: { intersections: 1 }
+    },
+    // ===== L24：避让特种车辆 =====
+    {
+      id: 'L24', title: '第 24 关 · 避让特种车辆', tags: ['避让特种车辆', '救护车'],
+      intro: '后方有救护车驶来，必须靠边停车让行。',
+      passScore: 80,
+      road: {
+        lanes: [
+          { x: 370, w: 40, type: 'left-turn' },
+          { x: 410, w: 40, type: 'forward' },
+          { x: 450, w: 40, type: 'right-turn' }
+        ],
+        laneDividers: true,
+        centerLine: { x: 430 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+      },
+      signals: [
+        { id: 'sig-n', type: 'circle', pos: { x: 370, y: 240 },
+          program: [
+            { state: 'green', duration: 12000 },
+            { state: 'yellow', duration: 2000 },
+            { state: 'red', duration: 6000 }
+          ] }
+      ],
+      signs: [],
+      npcs: [
+        {
+          id: 'amb-1',
+          spawnCondition: { type: 'always' },
+          spawnDelay: 1000,
+          startPos: { x: 410, y: canvas.height + 80, heading: 0 },
+          speed: 260,
+          color: '#fff',
+          label: '救护车',
+          pathScript: 'north-straight',
+          emergency: true
+        }
+      ],
+      decisionPoints: [{
+        id: 'dp-yield',
+        atIntersection: 'int-1',
+        signalBindings: ['sig-n'],
+        trigger: { x: 400, y: 380, radius: 80 },
+        prompt: '后方救护车驶来！必须让行！',
+        evaluate: {
+          'pass-through': { _dynamic: 'emergencyVehicleYield', deduct: 30, explanationKey: 'emergency-vehicle-yield-fail' },
+          'left-turn':    { _dynamic: 'emergencyVehicleYield', deduct: 30, explanationKey: 'emergency-vehicle-yield-fail' },
+          'right-turn':   { _dynamic: 'emergencyVehicleYield', deduct: 30, explanationKey: 'emergency-vehicle-yield-fail' },
+          'stop':         { _dynamic: 'emergencyVehicleYield', deduct: 0, explanationKey: 'emergency-vehicle-yield' },
+          'u-turn':       { _dynamic: 'emergencyVehicleYield', deduct: 30, explanationKey: 'emergency-vehicle-yield-fail' }
+        }
+      }],
+      completion: { intersections: 1 }
+    },
+    // ===== L25：右转避让行人 =====
+    {
+      id: 'L25', title: '第 25 关 · 右转避让行人', tags: ['右转让行人', '斑马线'],
+      intro: '右转时遇行人正在通过斑马线，必须停车让行。',
+      passScore: 80,
+      road: {
+        lanes: [
+          { x: 370, w: 40, type: 'left-turn' },
+          { x: 410, w: 40, type: 'forward' },
+          { x: 450, w: 40, type: 'right-turn' }
+        ],
+        laneDividers: true,
+        centerLine: { x: 430 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }],
+        crosswalks: [
+          { x: 440, y: 240, w: 20, h: 40 },
+          { x: 360, y: 360, w: 20, h: 40 }
+        ]
+      },
+      signals: [
+        { id: 'sig-n', type: 'circle', pos: { x: 370, y: 240 },
+          program: [
+            { state: 'red', duration: 4000 },
+            { state: 'green', duration: 10000 },
+            { state: 'yellow', duration: 2000 }
+          ] }
+      ],
+      signs: [],
+      npcs: [
+        {
+          id: 'ped-1',
+          category: 'pedestrian',
+          spawnCondition: { type: 'signal-state', signalId: 'sig-n', state: 'green' },
+          spawnDelay: 300,
+          startPos: { x: 460, y: 295, heading: Math.PI },
+          speed: 55,
+          color: '#e67e22',
+          label: '行人',
+          pathScript: 'pedestrian-west'
+        }
+      ],
+      decisionPoints: [{
+        id: 'dp-yield',
+        atIntersection: 'int-1',
+        signalBindings: ['sig-n'],
+        waitForGreen: true,
+        trigger: { x: 400, y: 380, radius: 80 },
+        prompt: '绿灯可右转，但斑马线上有行人！',
+        evaluate: {
+          'right-turn':   { _dynamic: 'pedestrianYieldOnRightTurn', deduct: 30, explanationKey: 'right-turn-pedestrian-yield-fail' },
+          'pass-through': { _dynamic: 'passThroughBySignal', deduct: 0, explanationKey: 'green-light-go' },
+          'left-turn':    { _dynamic: 'passThroughBySignal', deduct: 0, explanationKey: 'green-light-go' },
+          'stop':         { _dynamic: 'pedestrianYieldOnRightTurn', deduct: 0, explanationKey: 'right-turn-pedestrian-yield' },
+          'u-turn':       { _dynamic: 'uTurnBySignal', deduct: 30, explanationKey: 'u-turn-red-light' }
+        }
+      }],
+      completion: { intersections: 1 }
+    },
+    // ===== L26：路口拥堵/网格线 =====
+    {
+      id: 'L26', title: '第 26 关 · 网格线区域禁停', tags: ['网格线', '路口拥堵'],
+      intro: '黄色网格线区域禁止停车，前方拥堵时不得驶入。',
+      passScore: 80,
+      road: {
+        lanes: [
+          { x: 370, w: 40, type: 'left-turn' },
+          { x: 410, w: 40, type: 'forward' },
+          { x: 450, w: 40, type: 'right-turn' }
+        ],
+        laneDividers: true,
+        centerLine: { x: 430 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }],
+        gridLines: [
+          { x: 330, y: 200, w: 140, h: 100 }
+        ]
+      },
+      signals: [
+        { id: 'sig-n', type: 'circle', pos: { x: 370, y: 240 },
+          program: [
+            { state: 'green', duration: 10000 },
+            { state: 'yellow', duration: 2000 },
+            { state: 'red', duration: 6000 }
+          ] }
+      ],
+      signs: [],
+      npcs: [
+        {
+          id: 'npc-block',
+          spawnCondition: { type: 'always' },
+          spawnDelay: 0,
+          startPos: { x: 410, y: 260, heading: 0 },
+          speed: 30,
+          color: '#888',
+          label: '拥堵车辆',
+          pathScript: 'north-straight'
+        }
+      ],
+      decisionPoints: [{
+        id: 'dp-grid',
+        atIntersection: 'int-1',
+        signalBindings: ['sig-n'],
+        trigger: { x: 400, y: 380, radius: 80 },
+        prompt: '前方网格线区域拥堵！不要驶入网格线。',
+        evaluate: {
+          'pass-through': { _dynamic: 'gridLineBlock', deduct: 30, explanationKey: 'grid-line-violation' },
+          'left-turn':    { _dynamic: 'gridLineBlock', deduct: 30, explanationKey: 'grid-line-violation' },
+          'right-turn':   { _dynamic: 'gridLineBlock', deduct: 30, explanationKey: 'grid-line-violation' },
+          'stop':         { _dynamic: 'gridLineBlock', deduct: 0, explanationKey: 'grid-line-violation' },
+          'u-turn':       { _dynamic: 'gridLineBlock', deduct: 30, explanationKey: 'grid-line-violation' }
+        }
+      }],
+      completion: { intersections: 1 }
+    },
+    // ===== L27：让行标志(倒三角) =====
+    {
+      id: 'L27', title: '第 27 关 · 让行标志', tags: ['让行标志', '倒三角'],
+      intro: '前方路口有让行标志（倒三角），必须减速让行。',
+      passScore: 80,
+      road: {
+        lanes: [
+          { x: 370, w: 40, type: 'left-turn' },
+          { x: 410, w: 40, type: 'forward' },
+          { x: 450, w: 40, type: 'right-turn' }
+        ],
+        laneDividers: true,
+        centerLine: { x: 430 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+      },
+      signals: [],
+      signs: [{ type: 'yield', pos: { x: 340, y: 210 } }],
+      npcs: [
+        {
+          id: 'npc-1',
+          spawnCondition: { type: 'always' },
+          spawnDelay: 0,
+          startPos: { x: 520, y: 330, heading: -Math.PI / 2 },
+          speed: 180,
+          color: '#d84315',
+          label: '右方来车',
+          pathScript: 'east-straight'
+        }
+      ],
+      decisionPoints: [{
+        id: 'dp-yield',
+        atIntersection: 'int-1',
+        trigger: { x: 400, y: 380, radius: 80 },
+        prompt: '前方有让行标志！减速让行。',
+        evaluate: {
+          'pass-through': { _dynamic: 'yieldSignByRule', deduct: 30, explanationKey: 'yield-sign-fail' },
+          'left-turn':    { _dynamic: 'yieldSignByRule', deduct: 30, explanationKey: 'yield-sign-fail' },
+          'right-turn':   { _dynamic: 'yieldSignByRule', deduct: 30, explanationKey: 'yield-sign-fail' },
+          'stop':         { _dynamic: 'yieldSignByRule', deduct: 0, explanationKey: 'yield-sign' },
+          'u-turn':       { _dynamic: 'yieldSignByRule', deduct: 30, explanationKey: 'yield-sign-fail' }
+        }
+      }],
+      completion: { intersections: 1 }
+    },
+    // ===== L28：停车让行标志(六角红) =====
+    {
+      id: 'L28', title: '第 28 关 · 停车让行标志', tags: ['停车让行', '六角红'],
+      intro: '前方路口有停车让行标志（红色八边形"停"），必须完全停车后再通行。',
+      passScore: 80,
+      road: {
+        lanes: [
+          { x: 370, w: 40, type: 'left-turn' },
+          { x: 410, w: 40, type: 'forward' },
+          { x: 450, w: 40, type: 'right-turn' }
+        ],
+        laneDividers: true,
+        centerLine: { x: 430 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+      },
+      signals: [],
+      signs: [{ type: 'stop-sign', pos: { x: 340, y: 210 } }],
+      decisionPoints: [
+        {
+          id: 'dp-sign-stop',
+          atIntersection: 'int-1',
+          trigger: { x: 400, y: 380, radius: 80 },
+          prompt: '停车让行标志！必须完全停车后再通行。',
+          evaluate: {
+            'pass-through': { _dynamic: 'stopSignByRule', deduct: 30, explanationKey: 'stop-sign-fail' },
+            'left-turn':    { _dynamic: 'stopSignByRule', deduct: 30, explanationKey: 'stop-sign-fail' },
+            'right-turn':   { _dynamic: 'stopSignByRule', deduct: 30, explanationKey: 'stop-sign-fail' },
+            'stop':         { _dynamic: 'stopSignByRule', deduct: 0, explanationKey: 'stop-sign-rule' },
+            'u-turn':       { _dynamic: 'stopSignByRule', deduct: 30, explanationKey: 'stop-sign-fail' }
+          }
+        },
+        {
+          id: 'dp-proceed',
+          atIntersection: 'int-1',
+          trigger: { x: 400, y: 310, radius: 30 },
+          prompt: '已停车观察，确认安全后选择通行方向。',
+          evaluate: {
+            'pass-through': { correct: true, deduct: 0, explanationKey: 'green-light-go' },
+            'left-turn':    { correct: true, deduct: 0, explanationKey: 'green-light-go' },
+            'right-turn':   { correct: true, deduct: 0, explanationKey: 'green-light-go' },
+            'stop':         { correct: true, deduct: 0, explanationKey: 'safe-stop' }
+          }
+        }
+      ],
+      completion: { intersections: 1 }
+    },
+    // ===== L29：红灯闪烁 =====
+    {
+      id: 'L29', title: '第 29 关 · 红灯闪烁', tags: ['红灯闪烁', '停车让行'],
+      intro: '前方红灯持续闪烁，等同于停车让行标志，必须停车观察后通行。',
+      passScore: 80,
+      road: {
+        lanes: [
+          { x: 370, w: 40, type: 'left-turn' },
+          { x: 410, w: 40, type: 'forward' },
+          { x: 450, w: 40, type: 'right-turn' }
+        ],
+        laneDividers: true,
+        centerLine: { x: 430 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+      },
+      signals: [
+        { id: 'sig-n', type: 'circle', pos: { x: 370, y: 240 },
+          program: [
+            { state: 'red-flash', duration: 8000 },
+            { state: 'green', duration: 6000 },
+            { state: 'red-flash', duration: 8000 }
+          ] }
+      ],
+      signs: [],
+      decisionPoints: [
+        {
+          id: 'dp-flash-stop',
+          atIntersection: 'int-1',
+          signalBindings: ['sig-n'],
+          trigger: { x: 400, y: 380, radius: 80 },
+          prompt: '红灯闪烁！必须停车观察后再通行。',
+          evaluate: {
+            'pass-through': { _dynamic: 'redFlashBySignal', deduct: 30, explanationKey: 'red-flash-stop' },
+            'left-turn':    { _dynamic: 'redFlashBySignal', deduct: 30, explanationKey: 'red-flash-stop' },
+            'right-turn':   { _dynamic: 'redFlashBySignal', deduct: 0, explanationKey: 'circle-red-right-allowed' },
+            'stop':         { _dynamic: 'redFlashBySignal', deduct: 0, explanationKey: 'red-flash-stop' }
+          }
+        },
+        {
+          id: 'dp-proceed',
+          atIntersection: 'int-1',
+          signalBindings: ['sig-n'],
+          trigger: { x: 400, y: 310, radius: 30 },
+          prompt: '已停车观察，确认安全后选择通行方向。',
+          evaluate: {
+            'pass-through': { correct: true, deduct: 0, explanationKey: 'red-flash-proceed' },
+            'left-turn':    { correct: true, deduct: 0, explanationKey: 'red-flash-proceed' },
+            'right-turn':   { correct: true, deduct: 0, explanationKey: 'circle-red-right-allowed' },
+            'stop':         { correct: true, deduct: 0, explanationKey: 'safe-stop' }
+          }
+        }
+      ],
+      completion: { intersections: 1 }
+    },
+    // ===== L30：禁止左转标志 =====
+    {
+      id: 'L30', title: '第 30 关 · 禁止左转标志', tags: ['禁止左转', '标志优先'],
+      intro: '前方路口有禁止左转标志，即使绿灯也不得左转。',
+      passScore: 80,
+      road: {
+        lanes: [
+          { x: 370, w: 40, type: 'left-turn' },
+          { x: 410, w: 40, type: 'forward' },
+          { x: 450, w: 40, type: 'right-turn' }
+        ],
+        laneDividers: true,
+        centerLine: { x: 430 },
+        crossHalfWidth: 60,
+        intersections: [{ id: 'int-1', center: { x: 400, y: 300 }, roads: ['n','s','e','w'] }]
+      },
+      signals: [
+        { id: 'sig-n', type: 'circle', pos: { x: 370, y: 240 },
+          program: [
+            { state: 'red', duration: 4000 },
+            { state: 'green', duration: 10000 },
+            { state: 'yellow', duration: 2000 }
+          ] }
+      ],
+      signs: [{ type: 'no-left-turn', pos: { x: 510, y: 210 } }],
+      decisionPoints: [{
+        id: 'dp-1', atIntersection: 'int-1',
+        signalBindings: ['sig-n'],
+        trigger: { x: 400, y: 380, radius: 80 },
+        prompt: '禁止左转标志！即使绿灯也不得左转。',
+        evaluate: {
+          'left-turn':    { _dynamic: 'noLeftTurnBySign', deduct: 30, explanationKey: 'no-left-turn-sign-fail' },
+          'pass-through': { _dynamic: 'noLeftTurnBySign', deduct: 30, explanationKey: 'red-light-stop' },
+          'right-turn':   { _dynamic: 'noLeftTurnBySign', deduct: 0, explanationKey: 'circle-red-right-allowed' },
+          'stop':         { _dynamic: 'noLeftTurnBySign', deduct: 0, explanationKey: 'safe-stop' },
+          'u-turn':       { _dynamic: 'noLeftTurnBySign', deduct: 30, explanationKey: 'no-left-turn-sign-fail' }
+        }
+      }],
+      completion: { intersections: 1 }
     }
   ];
 
   // ===== LEVEL LOADER =====
+  function normalizeLevel(lv){
+    lv.road.lanes.forEach(function(lane){
+      if (!lane.type) lane.type = 'forward';
+    });
+    if (lv.road.laneDividers === undefined) lv.road.laneDividers = lv.road.lanes.length > 1;
+  }
   function loadLevel(idx){
-    const lv = LEVELS[idx];
+    var lv = JSON.parse(JSON.stringify(LEVELS[idx]));
     if (!lv) return null;
+    // L11：随机生成左转/右转等待区关卡
+    if (lv._randomWaitingZone) {
+      var dir = Math.random() < 0.5 ? 'left' : 'right';
+      var isLeft = dir === 'left';
+      lv.road.lanes = [
+        { x: isLeft ? 360 : 380, w: 50, type: isLeft ? 'left-turn' : 'forward' },
+        { x: isLeft ? 410 : 430, w: 50, type: isLeft ? 'forward' : 'right-turn' }
+      ];
+      lv.road.laneDividers = true;
+      lv.road.centerLine = null;
+      lv.road.waitingZones = [{
+        type: isLeft ? 'left-turn-wait' : 'right-turn-wait',
+        pos: { x: isLeft ? 360 : 430, y: 305 },
+        w: 44, h: 50
+      }];
+      lv.signals = [
+        { id: 'sig-fwd', type: 'circle', pos: { x: 340, y: 240 },
+          program: [
+            { state: 'green', duration: 10000 },
+            { state: 'yellow', duration: 2000 },
+            { state: 'red', duration: 5000 }
+          ] },
+        { id: 'sig-turn', type: 'arrow', pos: { x: 460, y: 240 },
+          program: isLeft ? [
+            { state: 'left-red', duration: 10000 },
+            { state: 'all-red', duration: 2000 },
+            { state: 'left-green', duration: 5000 },
+            { state: 'all-red', duration: 2000 }
+          ] : [
+            { state: 'right-red', duration: 10000 },
+            { state: 'all-red', duration: 2000 },
+            { state: 'right-green', duration: 5000 },
+            { state: 'all-red', duration: 2000 }
+          ] }
+      ];
+      lv.signs = [{ type: isLeft ? 'left-turn-waiting-zone' : 'right-turn-waiting-zone', pos: { x: 510, y: 210 } }];
+      var turnName = isLeft ? '左转' : '右转';
+      var turnArrow = isLeft ? 'left' : 'right';
+      lv.decisionPoints = [
+        {
+          id: 'dp-enter', atIntersection: 'int-1',
+          signalBindings: ['sig-fwd'],
+          trigger: { x: 400, y: 380, radius: 80 },
+          prompt: '观察信号灯，决定如何通过路口',
+          evaluate: {
+            'pass-through': { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
+            'left-turn':    isLeft
+              ? { _dynamic: 'waitingZoneEnterBySignal', deduct: 30, explanationKey: 'waiting-zone-premature' }
+              : { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
+            'right-turn':   !isLeft
+              ? { _dynamic: 'waitingZoneEnterBySignal', deduct: 30, explanationKey: 'waiting-zone-premature' }
+              : { _dynamic: 'circleRightBySignal', deduct: 0, explanationKey: 'circle-red-right-allowed' },
+            'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
+          }
+        },
+        {
+          id: 'dp-turn', atIntersection: 'int-1',
+          signalBindings: ['sig-turn'],
+          waitForGreen: true,
+          trigger: { x: isLeft ? 380 : 420, y: 310, radius: 30 },
+          prompt: turnName + '绿灯亮了，可以' + turnName + '通过！',
+          evaluate: {
+            'pass-through': { _dynamic: 'passThroughBySignal', deduct: 30, explanationKey: 'red-light-stop' },
+            'left-turn':    { _dynamic: 'arrowLeftBySignal',  deduct: 30, explanationKey: 'arrow-red-stop' },
+            'right-turn':   { _dynamic: 'arrowRightBySignal', deduct: 30, explanationKey: 'arrow-red-stop' },
+            'stop':         { correct: true,  deduct: 0,  explanationKey: 'safe-stop' }
+          }
+        }
+      ];
+    }
+    // L16：随机生成可变车道指示器方向和初始车道
+    if (lv._randomVariableLane) {
+      // 随机选择 LED 指示器的主要方向（另一个方向自动补充）
+      var primaryDir = Math.random() < 0.5 ? 'left' : 'forward';
+      var secondaryDir = primaryDir === 'left' ? 'forward' : 'left';
+      // 随机决定指示器先显示哪个方向
+      var firstDir = Math.random() < 0.5 ? primaryDir : secondaryDir;
+      var secondDir = firstDir === primaryDir ? secondaryDir : primaryDir;
+      lv.road.variableLaneIndicators[0].program = [
+        { direction: firstDir, duration: 8000 },
+        { direction: secondDir, duration: 8000 }
+      ];
+    }
     const errs = validateLevel(lv);
     if (errs.length > 0) {
       console.error('Level data invalid:', lv.id, errs);
       showDataErrorBanner(lv.id, errs);
       return null;
     }
+    normalizeLevel(lv);
     return lv;
   }
   function validateLevel(lv){
@@ -498,48 +2078,509 @@
   }
 
   // ===== EVALUATE DECISION =====
+  function findSignalState(dp, typePrefix, sigStates){
+    if (!dp.signalBindings || !currentLevel) return null;
+    for (var i = 0; i < dp.signalBindings.length; i++) {
+      var sid = dp.signalBindings[i];
+      var sig = currentLevel.signals.filter(function(s){ return s.id === sid; })[0];
+      if (sig && sig.type === typePrefix) return sigStates[sid];
+    }
+    return null;
+  }
+  function findAnySignalState(dp, sigStates){
+    if (!dp.signalBindings) return null;
+    for (var i = 0; i < dp.signalBindings.length; i++) {
+      var st = sigStates[dp.signalBindings[i]];
+      if (st) return st;
+    }
+    return null;
+  }
   function evaluateDecision(dp, action, signalStates){
     // 1. action 不在 evaluate 表里
     if (!dp.evaluate[action]) {
       return { correct: false, deduct: 0, explanationKey: 'unknown-action' };
     }
     const rule = dp.evaluate[action];
-    // 2. 动态规则（如根据信号灯状态判定）
+
     if (rule._dynamic === 'passThroughBySignal') {
-      // 信号绑定由 dp 显式声明（pure function：不依赖外部 currentLevel）
-      const sigId = dp.signalBindings && dp.signalBindings[0];
-      const sigState = sigId ? signalStates[sigId] : null;
-      if (!sigState) {
-        return { correct: false, deduct: SCORE_CONFIG.deductBySeverity.normal, explanationKey: 'signal-missing' };
+      // 直行：优先查圆饼灯
+      var circleState = findSignalState(dp, 'circle', signalStates);
+      if (circleState) {
+        if (circleState === 'green' || circleState === 'yellow') {
+          return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+        }
+        if (circleState === 'yellow-flash') {
+          return { correct: false, deduct: rule.deduct, explanationKey: 'yellow-stop' };
+        }
+        if (circleState === 'red-flash') {
+          return { correct: false, deduct: rule.deduct, explanationKey: 'red-flash-stop' };
+        }
+        if (circleState === 'red') {
+          return { correct: false, deduct: rule.deduct, explanationKey: rule.explanationKey };
+        }
       }
-      if (sigState === 'green' || sigState === 'yellow') {
-        return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+      // 无圆饼灯或圆饼灯非关键态时，检查箭头灯
+      // 直行不被非直行箭头约束：只要无 forward-red 且非 all-red 即可通行
+      var arrowBlocked = false;
+      if (dp.signalBindings && currentLevel) {
+        for (var i = 0; i < dp.signalBindings.length; i++) {
+          var sid = dp.signalBindings[i];
+          var sig = currentLevel.signals.filter(function(s){ return s.id === sid; })[0];
+          var st = signalStates[sid];
+          if (sig && sig.type === 'arrow') {
+            if (st === 'all-red' || st === 'forward-red') arrowBlocked = true;
+          }
+        }
       }
-      // 红灯
-      return { correct: false, deduct: rule.deduct, explanationKey: rule.explanationKey };
+      if (arrowBlocked) {
+        return { correct: false, deduct: rule.deduct, explanationKey: rule.explanationKey };
+      }
+      // 箭头灯非直行红灯或 all-red → 直行可通行
+      return { correct: true, deduct: 0, explanationKey: circleState ? 'green-light-go' : 'arrow-red-other-ok' };
     }
     if (rule._dynamic === 'arrowForwardBySignal') {
-      const sigId = dp.signalBindings && dp.signalBindings[0];
-      const sigState = sigId ? signalStates[sigId] : null;
+      var sigState = findSignalState(dp, 'arrow', signalStates);
       if (!sigState) return { correct: false, deduct: SCORE_CONFIG.deductBySeverity.normal, explanationKey: 'signal-missing' };
       const ok = (sigState === 'forward-green');
       return { correct: ok, deduct: ok ? 0 : rule.deduct, explanationKey: ok ? 'arrow-green-go' : rule.explanationKey };
     }
     if (rule._dynamic === 'arrowLeftBySignal') {
-      const sigId = dp.signalBindings && dp.signalBindings[0];
-      const sigState = sigId ? signalStates[sigId] : null;
+      var sigState = findSignalState(dp, 'arrow', signalStates);
       if (!sigState) return { correct: false, deduct: SCORE_CONFIG.deductBySeverity.normal, explanationKey: 'signal-missing' };
       const ok = (sigState === 'left-green');
       return { correct: ok, deduct: ok ? 0 : rule.deduct, explanationKey: ok ? 'arrow-green-go' : rule.explanationKey };
     }
     if (rule._dynamic === 'arrowRightBySignal') {
-      const sigId = dp.signalBindings && dp.signalBindings[0];
-      const sigState = sigId ? signalStates[sigId] : null;
+      var sigState = findSignalState(dp, 'arrow', signalStates);
       if (!sigState) return { correct: false, deduct: SCORE_CONFIG.deductBySeverity.normal, explanationKey: 'signal-missing' };
       const ok = (sigState === 'right-green');
       return { correct: ok, deduct: ok ? 0 : rule.deduct, explanationKey: ok ? 'arrow-green-go' : rule.explanationKey };
     }
-    // 3. 静态规则
+    if (rule._dynamic === 'circleRightBySignal') {
+      // 圆饼灯下右转：绿灯/黄灯/黄闪→正确，红灯/红闪→也正确（圆饼红灯不禁右转，除非有禁右标志）
+      var sigState = findSignalState(dp, 'circle', signalStates);
+      if (!sigState) return { correct: false, deduct: SCORE_CONFIG.deductBySeverity.normal, explanationKey: 'signal-missing' };
+      return { correct: true, deduct: 0, explanationKey: (sigState === 'red' || sigState === 'red-flash') ? 'circle-red-right-allowed' : 'green-light-go' };
+    }
+    if (rule._dynamic === 'circleRightSignBySignal') {
+      // 圆饼灯+禁右标志下右转：绿灯/黄灯→正确，红灯→禁止
+      var sigState = findSignalState(dp, 'circle', signalStates);
+      if (!sigState) return { correct: false, deduct: SCORE_CONFIG.deductBySeverity.normal, explanationKey: 'signal-missing' };
+      if (sigState === 'green' || sigState === 'yellow' || sigState === 'yellow-flash') {
+        return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+      }
+      return { correct: false, deduct: rule.deduct, explanationKey: 'red-light-no-right-sign' };
+    }
+    if (rule._dynamic === 'uTurnBySignal') {
+      // 掉头：任一信号绿灯/黄灯/左转绿→正确，红灯/红闪→禁止
+      var allowed = false;
+      if (dp.signalBindings) {
+        dp.signalBindings.forEach(function(sid){
+          var st = signalStates[sid];
+          if (st === 'green' || st === 'yellow' || st === 'yellow-flash' || st === 'left-green') allowed = true;
+        });
+      }
+      if (allowed) return { correct: true, deduct: 0, explanationKey: 'u-turn-allowed' };
+      return { correct: false, deduct: rule.deduct, explanationKey: 'u-turn-red-light' };
+    }
+    if (rule._dynamic === 'uTurnBySign') {
+      // 有禁掉头标志：任何灯态都禁止掉头
+      return { correct: false, deduct: rule.deduct, explanationKey: 'u-turn-no-sign' };
+    }
+    if (rule._dynamic === 'waitingZoneEnterBySignal') {
+      // 进入转弯等待区：直行绿灯/黄灯→正确，直行红灯→闯红灯
+      var circleState = findSignalState(dp, 'circle', signalStates);
+      if (!circleState) {
+        // 无圆饼灯时，查任一信号是否允许
+        var anyOk = false;
+        if (dp.signalBindings) {
+          dp.signalBindings.forEach(function(sid){
+            var st = signalStates[sid];
+            if (st === 'green' || st === 'yellow' || st === 'yellow-flash') anyOk = true;
+          });
+        }
+        if (anyOk) return { correct: true, deduct: 0, explanationKey: 'waiting-zone-enter' };
+        return { correct: false, deduct: rule.deduct, explanationKey: 'waiting-zone-premature' };
+      }
+      if (circleState === 'green' || circleState === 'yellow') {
+        return { correct: true, deduct: 0, explanationKey: 'waiting-zone-enter' };
+      }
+      if (circleState === 'yellow-flash') {
+        return { correct: true, deduct: 0, explanationKey: 'waiting-zone-enter' };
+      }
+      // 圆饼红灯：不得进入待转区（闯红灯）
+      return { correct: false, deduct: rule.deduct, explanationKey: 'waiting-zone-premature' };
+    }
+    if (rule._dynamic === 'malfunctionSlowBySignal') {
+      var sigState = findSignalState(dp, 'circle', signalStates) || findAnySignalState(dp, signalStates);
+      if (sigState === 'all-dark' || sigState === 'yellow-flash') {
+        return { correct: true, deduct: 0, explanationKey: 'signal-malfunction-stop' };
+      }
+      return { correct: true, deduct: 0, explanationKey: 'safe-stop' };
+    }
+    if (rule._dynamic === 'malfunctionBySignal') {
+      var sigState = findSignalState(dp, 'circle', signalStates) || findAnySignalState(dp, signalStates);
+      if (sigState === 'all-dark' || sigState === 'yellow-flash') {
+        // 圆饼灯下右转始终允许，其余方向须先停车观察
+        if (action === 'right-turn') return { correct: true, deduct: 0, explanationKey: 'circle-red-right-allowed' };
+        return { correct: false, deduct: rule.deduct, explanationKey: 'signal-malfunction-no-slow' };
+      }
+      // 信号灯正常时按标准规则
+      if (sigState === 'green' || sigState === 'yellow') {
+        return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+      }
+      // 红灯：右转允许，其余禁止
+      if (action === 'right-turn') return { correct: true, deduct: 0, explanationKey: 'circle-red-right-allowed' };
+      return { correct: false, deduct: rule.deduct, explanationKey: rule.explanationKey };
+    }
+    if (rule._dynamic === 'malfunctionProceedBySignal') {
+      var sigState = findSignalState(dp, 'circle', signalStates) || findAnySignalState(dp, signalStates);
+      if (sigState === 'all-dark' || sigState === 'yellow-flash') {
+        return { correct: true, deduct: 0, explanationKey: 'signal-malfunction-proceed' };
+      }
+      if (sigState === 'green' || sigState === 'yellow') {
+        return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+      }
+      return { correct: false, deduct: SCORE_CONFIG.deductBySeverity.normal, explanationKey: 'red-light-stop' };
+    }
+    if (rule._dynamic === 'railroadCrossingByBarrier') {
+      var rrState = null;
+      if (currentLevel.road.railroadCrossings) {
+        var rr = currentLevel.road.railroadCrossings[0];
+        rrState = state.railroadStates[rr.id];
+      }
+      if (rrState === 'barrier-down') {
+        return { correct: false, deduct: rule.deduct, explanationKey: 'railroad-crossing-violation' };
+      }
+      return { correct: true, deduct: 0, explanationKey: 'railroad-crossing-proceed' };
+    }
+    if (rule._dynamic === 'railroadCrossingStopByBarrier') {
+      var rrState = null;
+      if (currentLevel.road.railroadCrossings) {
+        var rr = currentLevel.road.railroadCrossings[0];
+        rrState = state.railroadStates[rr.id];
+      }
+      if (rrState === 'barrier-down') {
+        return { correct: true, deduct: 0, explanationKey: 'railroad-crossing-stop' };
+      }
+      return { correct: true, deduct: 0, explanationKey: 'safe-stop' };
+    }
+    if (rule._dynamic === 'variableLaneByIndicator') {
+      var currentLane = currentLevel.road.lanes[state.car.currentLaneIdx];
+      if (currentLane.type === 'variable' && currentLevel.road.variableLaneIndicators) {
+        var vli = currentLevel.road.variableLaneIndicators[0];
+        var indicatorDir = state.variableLaneStates[0];
+        var actionDir = action === 'left-turn' ? 'left' : action === 'right-turn' ? 'right' : action === 'pass-through' ? 'forward' : null;
+        if (actionDir && indicatorDir === actionDir) {
+          var circleState = findSignalState(dp, 'circle', signalStates);
+          if (circleState === 'green' || circleState === 'yellow') {
+            return { correct: true, deduct: 0, explanationKey: 'variable-lane-correct' };
+          }
+          return { correct: false, deduct: rule.deduct, explanationKey: 'red-light-stop' };
+        }
+        return { correct: false, deduct: rule.deduct, explanationKey: 'variable-lane-wrong-direction' };
+      }
+      // 不在可变车道 — 按普通信号灯规则
+      var circleState = findSignalState(dp, 'circle', signalStates);
+      if (circleState === 'green' || circleState === 'yellow') {
+        return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+      }
+      return { correct: false, deduct: rule.deduct, explanationKey: 'red-light-stop' };
+    }
+    if (rule._dynamic === 'yieldToStraightOnTurn') {
+      var circleState = findSignalState(dp, 'circle', signalStates);
+      if (action === 'stop') {
+        if (circleState === 'red') {
+          return { correct: true, deduct: 0, explanationKey: 'safe-stop' };
+        }
+        if (anyNPCInOrApproachingZone()) {
+          return { correct: true, deduct: 0, explanationKey: 'left-turn-yield-straight' };
+        }
+        return { correct: true, deduct: 0, explanationKey: 'safe-stop' };
+      }
+      if (circleState !== 'green' && circleState !== 'yellow' && circleState !== 'yellow-flash') {
+        return { correct: false, deduct: rule.deduct, explanationKey: 'red-light-stop' };
+      }
+      if (action === 'left-turn') {
+        if (anyNPCInOrApproachingZone()) {
+          return { correct: false, deduct: rule.deduct, explanationKey: 'left-turn-yield-straight-fail' };
+        }
+        return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+      }
+      if (action === 'pass-through') {
+        return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+      }
+      if (action === 'right-turn') {
+        return { correct: true, deduct: 0, explanationKey: 'circle-red-right-allowed' };
+      }
+      if (action === 'u-turn') {
+        if (anyNPCInOrApproachingZone()) {
+          return { correct: false, deduct: rule.deduct, explanationKey: 'left-turn-yield-straight-fail' };
+        }
+        return { correct: true, deduct: 0, explanationKey: 'u-turn-allowed' };
+      }
+      return { correct: false, deduct: rule.deduct, explanationKey: 'unknown-action' };
+    }
+    if (rule._dynamic === 'rightYieldLeftTurn') {
+      var circleState = findSignalState(dp, 'circle', signalStates);
+      if (action === 'stop') {
+        if (circleState === 'red') {
+          return { correct: true, deduct: 0, explanationKey: 'safe-stop' };
+        }
+        if (anyNPCInOrApproachingZone()) {
+          return { correct: true, deduct: 0, explanationKey: 'right-yield-left-turn' };
+        }
+        return { correct: true, deduct: 0, explanationKey: 'safe-stop' };
+      }
+      if (circleState !== 'green' && circleState !== 'yellow' && circleState !== 'yellow-flash') {
+        return { correct: false, deduct: rule.deduct, explanationKey: 'red-light-stop' };
+      }
+      if (action === 'right-turn') {
+        if (anyNPCInOrApproachingZone()) {
+          return { correct: false, deduct: rule.deduct, explanationKey: 'right-yield-left-turn-fail' };
+        }
+        return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+      }
+      if (action === 'pass-through') {
+        return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+      }
+      if (action === 'left-turn') {
+        return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+      }
+      return { correct: false, deduct: rule.deduct, explanationKey: 'unknown-action' };
+    }
+    if (rule._dynamic === 'yieldToRightSide') {
+      if (action === 'stop') {
+        if (anyNPCInOrApproachingZone()) {
+          return { correct: true, deduct: 0, explanationKey: 'yield-to-right' };
+        }
+        return { correct: true, deduct: 0, explanationKey: 'safe-stop' };
+      }
+      if (anyNPCInOrApproachingZone()) {
+        return { correct: false, deduct: rule.deduct, explanationKey: 'yield-to-right-fail' };
+      }
+      return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+    }
+    if (rule._dynamic === 'uTurnYieldOncoming') {
+      var circleState = findSignalState(dp, 'circle', signalStates);
+      if (action === 'stop') {
+        if (circleState === 'red') {
+          return { correct: true, deduct: 0, explanationKey: 'safe-stop' };
+        }
+        if (anyNPCInOrApproachingZone()) {
+          return { correct: true, deduct: 0, explanationKey: 'uturn-yield-oncoming' };
+        }
+        return { correct: true, deduct: 0, explanationKey: 'safe-stop' };
+      }
+      if (circleState !== 'green' && circleState !== 'yellow' && circleState !== 'yellow-flash') {
+        return { correct: false, deduct: rule.deduct, explanationKey: 'u-turn-red-light' };
+      }
+      if (action === 'u-turn') {
+        if (anyNPCInOrApproachingZone()) {
+          return { correct: false, deduct: rule.deduct, explanationKey: 'uturn-yield-oncoming-fail' };
+        }
+        return { correct: true, deduct: 0, explanationKey: 'u-turn-allowed' };
+      }
+      if (action === 'pass-through') {
+        return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+      }
+      if (action === 'left-turn') {
+        return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+      }
+      if (action === 'right-turn') {
+        return { correct: true, deduct: 0, explanationKey: 'circle-red-right-allowed' };
+      }
+      return { correct: false, deduct: rule.deduct, explanationKey: 'unknown-action' };
+    }
+    if (rule._dynamic === 'alreadyCrossedProceedBySignal') {
+      var sigState = findSignalState(dp, 'circle', signalStates) || findAnySignalState(dp, signalStates);
+      if (sigState === 'yellow-flash') {
+        return { correct: true, deduct: 0, explanationKey: rule.explanationKey };
+      }
+      return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+    }
+    if (rule._dynamic === 'pedestrianYield') {
+      if (action === 'stop') {
+        if (anyPedestrianInOrApproachingZone()) {
+          return { correct: true, deduct: 0, explanationKey: 'pedestrian-yield' };
+        }
+        return { correct: true, deduct: 0, explanationKey: 'safe-stop' };
+      }
+      var circleState = findSignalState(dp, 'circle', signalStates);
+      // 右转：圆饼红灯允许右转（同 circleRightBySignal），但行人在场时必须让行
+      if (action === 'right-turn') {
+        if (anyPedestrianInOrApproachingZone()) {
+          return { correct: false, deduct: rule.deduct, explanationKey: 'pedestrian-yield-fail' };
+        }
+        return { correct: true, deduct: 0, explanationKey: (circleState === 'red' || circleState === 'red-flash') ? 'circle-red-right-allowed' : 'green-light-go' };
+      }
+      if (circleState === 'red' || circleState === 'red-flash') {
+        if (action === 'pass-through' || action === 'left-turn' || action === 'u-turn') {
+          return { correct: false, deduct: rule.deduct, explanationKey: circleState === 'red-flash' ? 'red-flash-stop' : 'red-light-stop' };
+        }
+      }
+      if (anyPedestrianInOrApproachingZone()) {
+        return { correct: false, deduct: rule.deduct, explanationKey: 'pedestrian-yield-fail' };
+      }
+      return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+    }
+    if (rule._dynamic === 'pedestrianYieldOnRightTurn') {
+      if (action === 'stop') {
+        if (anyPedestrianInOrApproachingZone()) {
+          return { correct: true, deduct: 0, explanationKey: 'right-turn-pedestrian-yield' };
+        }
+        return { correct: true, deduct: 0, explanationKey: 'safe-stop' };
+      }
+      if (action === 'right-turn') {
+        if (anyPedestrianInOrApproachingZone()) {
+          return { correct: false, deduct: rule.deduct, explanationKey: 'right-turn-pedestrian-yield-fail' };
+        }
+        var circleState = findSignalState(dp, 'circle', signalStates);
+        return { correct: true, deduct: 0, explanationKey: (circleState === 'red' || circleState === 'red-flash') ? 'circle-red-right-allowed' : 'green-light-go' };
+      }
+      var circleState = findSignalState(dp, 'circle', signalStates);
+      if (circleState === 'red' || circleState === 'red-flash') {
+        return { correct: false, deduct: rule.deduct, explanationKey: circleState === 'red-flash' ? 'red-flash-stop' : 'red-light-stop' };
+      }
+      return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+    }
+    if (rule._dynamic === 'emergencyVehicleYield') {
+      if (action === 'stop') {
+        if (anyEmergencyVehicleApproaching()) {
+          return { correct: true, deduct: 0, explanationKey: 'emergency-vehicle-yield' };
+        }
+        return { correct: true, deduct: 0, explanationKey: 'safe-stop' };
+      }
+      if (anyEmergencyVehicleApproaching()) {
+        return { correct: false, deduct: rule.deduct, explanationKey: 'emergency-vehicle-yield-fail' };
+      }
+      // 无特种车辆时按信号灯正常判断
+      var circleState = findSignalState(dp, 'circle', signalStates);
+      if (action === 'right-turn') {
+        return { correct: true, deduct: 0, explanationKey: (circleState === 'red' || circleState === 'red-flash') ? 'circle-red-right-allowed' : 'green-light-go' };
+      }
+      if (circleState === 'green' || circleState === 'yellow') {
+        return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+      }
+      if (circleState === 'red' || circleState === 'red-flash') {
+        return { correct: false, deduct: rule.deduct, explanationKey: circleState === 'red-flash' ? 'red-flash-stop' : 'red-light-stop' };
+      }
+      return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+    }
+    if (rule._dynamic === 'gridLineBlock') {
+      // 网格线关卡：前方拥堵时不得进入网格线区域
+      // 用 NPC 模拟拥堵：NPC在场=拥堵
+      if (action === 'stop') {
+        if (anyNPCInOrApproachingZone()) {
+          return { correct: true, deduct: 0, explanationKey: 'safe-stop' };
+        }
+        return { correct: true, deduct: 0, explanationKey: 'safe-stop' };
+      }
+      if (anyNPCInOrApproachingZone()) {
+        return { correct: false, deduct: rule.deduct, explanationKey: 'grid-line-violation' };
+      }
+      var circleState = findSignalState(dp, 'circle', signalStates);
+      if (circleState === 'red' || circleState === 'red-flash') {
+        return { correct: false, deduct: rule.deduct, explanationKey: circleState === 'red-flash' ? 'red-flash-stop' : 'red-light-stop' };
+      }
+      return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+    }
+    if (rule._dynamic === 'yieldSignByRule') {
+      // 让行标志：减速观察，让优先方向车辆先行
+      if (action === 'stop') {
+        if (anyNPCInOrApproachingZone()) {
+          return { correct: true, deduct: 0, explanationKey: 'yield-sign' };
+        }
+        return { correct: true, deduct: 0, explanationKey: 'safe-stop' };
+      }
+      if (anyNPCInOrApproachingZone()) {
+        return { correct: false, deduct: rule.deduct, explanationKey: 'yield-sign-fail' };
+      }
+      return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+    }
+    if (rule._dynamic === 'stopSignByRule') {
+      // 停车让行标志：必须完全停车后再通行
+      if (action === 'stop') {
+        return { correct: true, deduct: 0, explanationKey: 'stop-sign-rule' };
+      }
+      return { correct: false, deduct: rule.deduct, explanationKey: 'stop-sign-fail' };
+    }
+    if (rule._dynamic === 'noLeftTurnBySign') {
+      // 禁止左转标志：任何灯态下不得左转
+      if (action === 'left-turn') {
+        return { correct: false, deduct: rule.deduct, explanationKey: 'no-left-turn-sign-fail' };
+      }
+      // 其他方向按信号灯正常判断
+      var circleState = findSignalState(dp, 'circle', signalStates);
+      if (action === 'pass-through') {
+        if (circleState === 'green' || circleState === 'yellow') {
+          return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+        }
+        return { correct: false, deduct: rule.deduct, explanationKey: 'red-light-stop' };
+      }
+      if (action === 'right-turn') {
+        return { correct: true, deduct: 0, explanationKey: 'circle-red-right-allowed' };
+      }
+      if (action === 'stop') {
+        return { correct: true, deduct: 0, explanationKey: 'safe-stop' };
+      }
+      if (action === 'u-turn') {
+        return { correct: false, deduct: rule.deduct, explanationKey: 'no-left-turn-sign-fail' };
+      }
+      return { correct: false, deduct: rule.deduct, explanationKey: 'unknown-action' };
+    }
+    if (rule._dynamic === 'redFlashBySignal') {
+      // 红灯闪烁：等同于停车让行，必须停车观察
+      var circleState = findSignalState(dp, 'circle', signalStates);
+      if (action === 'stop') {
+        if (circleState === 'red-flash') {
+          return { correct: true, deduct: 0, explanationKey: 'red-flash-stop' };
+        }
+        return { correct: true, deduct: 0, explanationKey: 'safe-stop' };
+      }
+      if (circleState === 'red-flash') {
+        // 红灯闪烁时直行/左转必须停车
+        if (action === 'pass-through' || action === 'left-turn') {
+          return { correct: false, deduct: rule.deduct, explanationKey: 'red-flash-stop' };
+        }
+        // 右转：圆饼红灯闪烁允许右转（同圆饼红灯）
+        if (action === 'right-turn') {
+          return { correct: true, deduct: 0, explanationKey: 'circle-red-right-allowed' };
+        }
+      }
+      if (circleState === 'green' || circleState === 'yellow') {
+        return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+      }
+      if (circleState === 'red') {
+        if (action === 'right-turn') return { correct: true, deduct: 0, explanationKey: 'circle-red-right-allowed' };
+        return { correct: false, deduct: rule.deduct, explanationKey: 'red-light-stop' };
+      }
+      return { correct: false, deduct: rule.deduct, explanationKey: 'red-light-stop' };
+    }
+    if (rule._dynamic === 'circleRedArrowLeft') {
+      // 圆饼红灯+左转绿箭头：左转按箭头灯走，直行/右转按圆饼灯走
+      var circleState = findSignalState(dp, 'circle', signalStates);
+      var arrowState = findSignalState(dp, 'arrow', signalStates);
+      if (action === 'left-turn') {
+        if (arrowState === 'left-green') {
+          return { correct: true, deduct: 0, explanationKey: 'circle-red-arrow-left-go' };
+        }
+        return { correct: false, deduct: rule.deduct, explanationKey: 'arrow-red-stop' };
+      }
+      if (action === 'pass-through') {
+        if (circleState === 'green' || circleState === 'yellow') {
+          return { correct: true, deduct: 0, explanationKey: 'green-light-go' };
+        }
+        return { correct: false, deduct: rule.deduct, explanationKey: 'circle-red-arrow-left-no-straight' };
+      }
+      if (action === 'right-turn') {
+        return { correct: true, deduct: 0, explanationKey: (circleState === 'red' || circleState === 'red-flash') ? 'circle-red-right-allowed' : 'green-light-go' };
+      }
+      if (action === 'stop') {
+        return { correct: true, deduct: 0, explanationKey: 'safe-stop' };
+      }
+      return { correct: false, deduct: rule.deduct, explanationKey: 'unknown-action' };
+    }
     return { correct: rule.correct, deduct: rule.deduct || 0, explanationKey: rule.explanationKey };
   }
 
@@ -559,8 +2600,13 @@
     score: 100,
     car: null,
     currentDecisionPoint: null,
+    resolvedDPs: {},
     signalStates: {},
+    railroadStates: {},
+    variableLaneStates: {},
     signalStart: 0,
+    npcs: [],
+    npcSpawnTimers: {},
     unlockedLevels: 1,
   };
   function transition(newMode){
@@ -595,10 +2641,50 @@
     ctx.fillStyle = '#2d5a2d';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!road) return;
-    // 主路：垂直方向
+    // 计算路面整体边界
+    var minX = Infinity, maxX = -Infinity;
     road.lanes.forEach(function(lane){
-      ctx.fillStyle = '#3a3a3a';
-      ctx.fillRect(lane.x - lane.w/2, 0, lane.w, canvas.height);
+      var left = lane.x - lane.w / 2;
+      var right = lane.x + lane.w / 2;
+      if (left < minX) minX = left;
+      if (right > maxX) maxX = right;
+    });
+    // 绘制连续路面
+    ctx.fillStyle = '#3a3a3a';
+    ctx.fillRect(minX, 0, maxX - minX, canvas.height);
+    // 车道分隔线（白色虚线）
+    if (road.laneDividers && road.lanes.length > 1) {
+      ctx.strokeStyle = '#fff';
+      ctx.setLineDash([12, 8]);
+      ctx.lineWidth = 2;
+      for (var i = 0; i < road.lanes.length - 1; i++) {
+        var dividerX = (road.lanes[i].x + road.lanes[i].w / 2 + road.lanes[i + 1].x - road.lanes[i + 1].w / 2) / 2;
+        ctx.beginPath();
+        ctx.moveTo(dividerX, 0);
+        ctx.lineTo(dividerX, canvas.height);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+    // 路面方向箭头
+    road.lanes.forEach(function(lane, laneIdx){
+      var dir;
+      if (lane.type === 'variable') {
+        // 可变车道方向由指示器当前状态决定
+        if (road.variableLaneIndicators) {
+          var vli = road.variableLaneIndicators.find(function(v){ return v.laneIdx === laneIdx; });
+          if (vli) {
+            var indicatorIdx = road.variableLaneIndicators.indexOf(vli);
+            dir = state.variableLaneStates[indicatorIdx] || 'forward';
+          }
+        }
+        if (!dir) dir = 'forward';
+      } else {
+        dir = lane.type === 'left-turn' ? 'left' : (lane.type === 'right-turn' ? 'right' : 'forward');
+      }
+      for (var ay = 80; ay < canvas.height; ay += 120) {
+        drawRoadArrow(lane.x, ay, dir, '#aaa');
+      }
     });
     // 路口处的横向道路
     if (road.intersections) {
@@ -607,11 +2693,51 @@
         ctx.fillRect(0, it.center.y - road.crossHalfWidth, canvas.width, road.crossHalfWidth * 2);
         // 停止线（白色实线）
         ctx.fillStyle = '#fff';
-        ctx.fillRect(it.center.x - road.crossHalfWidth, it.center.y - road.crossHalfWidth - 3, road.crossHalfWidth * 2, 3);
-        ctx.fillRect(it.center.x - road.crossHalfWidth, it.center.y + road.crossHalfWidth, road.crossHalfWidth * 2, 3);
+        ctx.fillRect(minX, it.center.y - road.crossHalfWidth - 3, maxX - minX, 3);
+        ctx.fillRect(minX, it.center.y + road.crossHalfWidth, maxX - minX, 3);
+        // 斑马线
+        if (road.crosswalks) {
+          road.crosswalks.forEach(function(cw){
+            var cx = cw.x, cy = cw.y, cw2 = cw.w || 20, ch = cw.h || 40;
+            ctx.fillStyle = '#fff';
+            for (var sy = cy - ch/2; sy < cy + ch/2; sy += 8) {
+              ctx.fillRect(cx - cw2/2, sy, cw2, 4);
+            }
+          });
+        }
       });
     }
-    // 中线（黄色虚线）
+    // 网格线（黄色交叉线区域）
+    if (road.gridLines) {
+      road.gridLines.forEach(function(gl){
+        ctx.fillStyle = 'rgba(255, 220, 0, 0.12)';
+        ctx.fillRect(gl.x, gl.y, gl.w, gl.h);
+        ctx.strokeStyle = '#daa520';
+        ctx.lineWidth = 1.5;
+        var step = 14;
+        for (var dx = 0; dx < gl.w + gl.h; dx += step) {
+          ctx.beginPath();
+          var sx = gl.x + Math.min(dx, gl.w);
+          var sy = gl.y + Math.max(0, dx - gl.w);
+          var ex = gl.x + Math.max(0, dx - gl.h);
+          var ey = gl.y + Math.min(dx, gl.h);
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(ex, ey);
+          ctx.stroke();
+        }
+        for (var dx = 0; dx < gl.w + gl.h; dx += step) {
+          ctx.beginPath();
+          var sx = gl.x + gl.w - Math.min(dx, gl.w);
+          var sy = gl.y + Math.max(0, dx - gl.w);
+          var ex = gl.x + gl.w - Math.max(0, dx - gl.h);
+          var ey = gl.y + Math.min(dx, gl.h);
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(ex, ey);
+          ctx.stroke();
+        }
+      });
+    }
+    // 中线（黄色虚线）——仅单车道
     if (road.centerLine) {
       ctx.strokeStyle = '#ffd700';
       ctx.setLineDash([20, 15]);
@@ -622,6 +2748,140 @@
       ctx.stroke();
       ctx.setLineDash([]);
     }
+    // 等待区（白色虚线框+弧形箭头）
+    if (road.waitingZones) {
+      road.waitingZones.forEach(function(wz){
+        var x = wz.pos.x, y = wz.pos.y, w = wz.w || 40, h = wz.h || 40;
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        if (wz.type === 'left-turn-wait') {
+          // 左转待转区：从停止线延伸的梯形区域
+          var topW = w * 0.6;
+          // 外轮廓虚线
+          ctx.setLineDash([8, 5]);
+          ctx.beginPath();
+          ctx.moveTo(x - w/2, y + h/2);          // 左下
+          ctx.lineTo(x - topW/2, y - h/2);       // 左上
+          ctx.lineTo(x + topW/2, y - h/2);       // 右上
+          ctx.lineTo(x + w/2, y + h/2);          // 右下
+          ctx.closePath();
+          ctx.stroke();
+          ctx.setLineDash([]);
+          // 内部左转弧形箭头
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(x + w/5, y, w/3, -Math.PI * 0.5, Math.PI, false);
+          ctx.stroke();
+          ctx.fillStyle = '#fff';
+          ctx.beginPath();
+          ctx.moveTo(x - w/4, y + w/5);
+          ctx.lineTo(x - w/4 - 5, y + w/5 - 7);
+          ctx.lineTo(x - w/4 + 7, y + w/5);
+          ctx.closePath();
+          ctx.fill();
+        } else if (wz.type === 'right-turn-wait') {
+          // 右转等待区：从停止线延伸的梯形区域
+          var topW = w * 0.6;
+          ctx.setLineDash([8, 5]);
+          ctx.beginPath();
+          ctx.moveTo(x - w/2, y + h/2);
+          ctx.lineTo(x - topW/2, y - h/2);
+          ctx.lineTo(x + topW/2, y - h/2);
+          ctx.lineTo(x + w/2, y + h/2);
+          ctx.closePath();
+          ctx.stroke();
+          ctx.setLineDash([]);
+          // 内部右转弧形箭头
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(x - w/5, y, w/3, -Math.PI, Math.PI * 0.5, false);
+          ctx.stroke();
+          ctx.fillStyle = '#fff';
+          ctx.beginPath();
+          ctx.moveTo(x + w/4, y + w/5);
+          ctx.lineTo(x + w/4 + 5, y + w/5 - 7);
+          ctx.lineTo(x + w/4 - 7, y + w/5);
+          ctx.closePath();
+          ctx.fill();
+        } else if (wz.type === 'yellow-turn-wait') {
+          // 黄灯等待区：虚线框+双向弧形箭头
+          ctx.setLineDash([8, 5]);
+          ctx.strokeRect(x - w/2, y - h/2, w, h);
+          ctx.setLineDash([]);
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(x + 6, y - 5, w/4, -Math.PI * 0.5, Math.PI, false);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(x - 6, y + 5, w/4, -Math.PI, Math.PI * 0.5, false);
+          ctx.stroke();
+        }
+      });
+    }
+    // 实线（禁止跨越）
+    if (road.solidLines) {
+      road.solidLines.forEach(function(sl){
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = sl.width || 4;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(sl.x1, sl.y1);
+        ctx.lineTo(sl.x2, sl.y2);
+        ctx.stroke();
+      });
+    }
+    // 导流区域（V形/斜纹）
+    if (road.guideAreas) {
+      road.guideAreas.forEach(function(ga){
+        ctx.fillStyle = ga.fill || '#ddd';
+        ctx.globalAlpha = 0.3;
+        ctx.beginPath();
+        ctx.moveTo(ga.points[0].x, ga.points[0].y);
+        for (var i = 1; i < ga.points.length; i++) {
+          ctx.lineTo(ga.points[i].x, ga.points[i].y);
+        }
+        ctx.closePath();
+        ctx.fill();
+        // 斜纹线
+        ctx.strokeStyle = '#888';
+        ctx.lineWidth = 1;
+        ctx.globalAlpha = 0.5;
+        var gMinX = Infinity, gMaxX = -Infinity, gMinY = Infinity, gMaxY = -Infinity;
+        ga.points.forEach(function(p){
+          if (p.x < gMinX) gMinX = p.x;
+          if (p.x > gMaxX) gMaxX = p.x;
+          if (p.y < gMinY) gMinY = p.y;
+          if (p.y > gMaxY) gMaxY = p.y;
+        });
+        for (var hy = gMinY; hy <= gMaxY; hy += 8) {
+          ctx.beginPath();
+          ctx.moveTo(gMinX, hy);
+          ctx.lineTo(gMinX + (hy - gMinY), gMinY);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1.0;
+      });
+    }
+  }
+  function drawRoadArrow(cx, cy, dir, color){
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.3;
+    ctx.beginPath();
+    var s = 2.5;
+    if (dir === 'forward') {
+      ctx.moveTo(cx, cy - 8*s); ctx.lineTo(cx + 5*s, cy + 4*s); ctx.lineTo(cx - 5*s, cy + 4*s);
+    } else if (dir === 'left') {
+      ctx.moveTo(cx - 8*s, cy); ctx.lineTo(cx + 4*s, cy - 5*s); ctx.lineTo(cx + 4*s, cy + 5*s);
+    } else if (dir === 'right') {
+      ctx.moveTo(cx + 8*s, cy); ctx.lineTo(cx - 4*s, cy - 5*s); ctx.lineTo(cx - 4*s, cy + 5*s);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
   }
   function drawLights(signals, signalStates){
     if (!signals) return;
@@ -635,21 +2895,38 @@
         // 三个圆
         [['red','#c33',-22],['yellow','#cc0',0],['green','#3c3',22]].forEach(function(p){
           ctx.beginPath();
-          ctx.fillStyle = (st === p[0]) ? p[1] : '#444';
+          let on = (st === p[0]);
+          // 黄灯闪烁：每 500ms 切换
+          if (st === 'yellow-flash' && p[0] === 'yellow') {
+            on = Math.floor(performance.now() / 500) % 2 === 0;
+          }
+          // 红灯闪烁：每 600ms 切换
+          if (st === 'red-flash' && p[0] === 'red') {
+            on = Math.floor(performance.now() / 600) % 2 === 0;
+          }
+          ctx.fillStyle = on ? p[1] : '#444';
           ctx.arc(x, y + p[2], 9, 0, Math.PI*2);
           ctx.fill();
         });
+        // 信号灯全灭：画红色 X 标记表示故障
+        if (st === 'all-dark') {
+          ctx.strokeStyle = '#c33';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(x - 10, y - 30); ctx.lineTo(x + 10, y + 30);
+          ctx.moveTo(x + 10, y - 30); ctx.lineTo(x - 10, y + 30);
+          ctx.stroke();
+        }
       } else if (sig.type === 'arrow') {
         ctx.fillStyle = '#222';
         ctx.fillRect(x - 18, y - 30, 36, 60);
         const ast = signalStates[sig.id] || 'all-red';
-        [['left','left-green'],['forward','forward-green'],['right','right-green']].forEach(function(arr, i){
+        [['left','left-green','left-red'],['forward','forward-green','forward-red'],['right','right-green','right-red']].forEach(function(arr, i){
           const drawDir = arr[0];
           const matchOn = arr[1];
+          const matchRed = arr[2];
           const ay = y - 20 + i * 20;
-          const isOn = ast === matchOn;
-          const isAnyRed = ast === 'all-red' || ast === 'left-red' || ast === 'forward-red' || ast === 'right-red';
-          const color = isOn ? '#3c3' : (isAnyRed ? '#5a1a1a' : '#444');
+          const color = ast === matchOn ? '#3c3' : (ast === matchRed || ast === 'all-red' ? '#c22' : '#444');
           drawArrow(x, ay, drawDir, color);
         });
       }
@@ -685,6 +2962,85 @@
     ctx.fillRect(5, -16, 3, 2);
     ctx.restore();
   }
+  function drawNPCCar(npc){
+    if (!npc || !npc.active) return;
+    if (npc.category === 'pedestrian') { drawPedestrian(npc); return; }
+    ctx.save();
+    ctx.translate(npc.x, npc.y);
+    ctx.rotate(npc.heading || 0);
+    // 特种车辆闪烁灯
+    if (npc.emergency) {
+      var flashOn = Math.floor(performance.now() / 200) % 2 === 0;
+      ctx.fillStyle = npc.color || '#3b7dd8';
+      ctx.fillRect(-9, -16, 18, 32);
+      ctx.fillStyle = '#aac';
+      ctx.fillRect(-7, -12, 14, 8);
+      if (flashOn) {
+        ctx.fillStyle = '#f00';
+        ctx.fillRect(-11, -18, 5, 3);
+        ctx.fillStyle = '#00f';
+        ctx.fillRect(6, -18, 5, 3);
+      } else {
+        ctx.fillStyle = '#600';
+        ctx.fillRect(-11, -18, 5, 3);
+        ctx.fillStyle = '#006';
+        ctx.fillRect(6, -18, 5, 3);
+      }
+      ctx.fillStyle = '#ffd';
+      ctx.fillRect(-8, -16, 3, 2);
+      ctx.fillRect(5, -16, 3, 2);
+    } else {
+      ctx.fillStyle = npc.color || '#3b7dd8';
+      ctx.fillRect(-9, -16, 18, 32);
+      ctx.fillStyle = '#aac';
+      ctx.fillRect(-7, -12, 14, 8);
+      ctx.fillStyle = '#ffd';
+      ctx.fillRect(-8, -16, 3, 2);
+      ctx.fillRect(5, -16, 3, 2);
+    }
+    ctx.restore();
+    ctx.fillStyle = npc.color || '#3b7dd8';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(npc.label || 'NPC', npc.x, npc.y - 22);
+    ctx.textAlign = 'start';
+  }
+  function drawPedestrian(npc){
+    if (!npc || !npc.active) return;
+    var x = npc.x, y = npc.y;
+    // 头
+    ctx.fillStyle = '#f5d0a9';
+    ctx.beginPath();
+    ctx.arc(x, y - 10, 5, 0, Math.PI * 2);
+    ctx.fill();
+    // 身体
+    ctx.strokeStyle = '#e67e22';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(x, y - 5);
+    ctx.lineTo(x, y + 4);
+    ctx.stroke();
+    // 腿（走路动画）
+    var walk = Math.sin(performance.now() / 200) * 4;
+    ctx.beginPath();
+    ctx.moveTo(x, y + 4);
+    ctx.lineTo(x - 4 + walk, y + 10);
+    ctx.moveTo(x, y + 4);
+    ctx.lineTo(x + 4 - walk, y + 10);
+    ctx.stroke();
+    // 手臂
+    ctx.beginPath();
+    ctx.moveTo(x - 5 - walk * 0.5, y - 2);
+    ctx.lineTo(x, y - 1);
+    ctx.lineTo(x + 5 + walk * 0.5, y - 2);
+    ctx.stroke();
+    // 标签
+    ctx.fillStyle = '#e67e22';
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(npc.label || '行人', x, y - 18);
+    ctx.textAlign = 'start';
+  }
 
   // ===== LOOP =====
   let lastT = 0;
@@ -698,13 +3054,34 @@
   // ===== LOGIC =====
   function initCarForLevel(lv){
     // 玩家车从底部出现，向北行驶（heading=0 表示朝上）
-    const startLane = lv.road.lanes[0];
-    state.car = { x: startLane.x, y: canvas.height - 60, heading: 0, speed: 80, stopped: false };
+    var startIdx = 0;
+    if (lv.road.lanes.length > 1) {
+      startIdx = Math.floor(Math.random() * lv.road.lanes.length);
+    }
+    const startLane = lv.road.lanes[startIdx];
+    state.car = {
+      x: startLane.x, y: canvas.height - 60, heading: 0, speed: 200,
+      stopped: false, turnTarget: null, moveTarget: null,
+      currentLaneIdx: startIdx, laneChangeTargetX: null,
+      inWaitingZone: false, waitingZoneDir: null,
+      baseSpeed: 200, minSpeed: 40, maxSpeed: 300,
+      accel: 80, brake: 120,
+      speedControlEnabled: lv._speedControl || false
+    };
     state.score = SCORE_CONFIG.initial;
     state.currentDecisionPoint = null;
+    state.resolvedDPs = {};
     state.intersectionsCleared = 0;
+    state._solidLineViolationRecorded = {};
+    state._guideAreaViolationRecorded = {};
+    state._speedViolationRecorded = {};
+    state.npcs = [];
+    state.npcSpawnTimers = {};
+    state._yieldWaitActive = false;
     // 初始化信号灯状态
     state.signalStates = {};
+    state.railroadStates = {};
+    state.variableLaneStates = {};
     state.signalStart = performance.now();
   }
   function updateSignals(now){
@@ -716,23 +3093,254 @@
       for (let i = 0; i < sig.program.length; i++) {
         if (t < sig.program[i].duration) {
           state.signalStates[sig.id] = sig.program[i].state;
-          return;
+          break;
         }
         t -= sig.program[i].duration;
       }
     });
+    // 铁道路口栏杆状态
+    if (currentLevel.road.railroadCrossings) {
+      currentLevel.road.railroadCrossings.forEach(function(rr){
+        const cycleTotal = rr.program.reduce(function(s,p){ return s + p.duration; }, 0);
+        const elapsed = (now - state.signalStart) % cycleTotal;
+        let t = elapsed;
+        for (let i = 0; i < rr.program.length; i++) {
+          if (t < rr.program[i].duration) {
+            state.railroadStates[rr.id] = rr.program[i].state;
+            break;
+          }
+          t -= rr.program[i].duration;
+        }
+      });
+    }
+    // 可变车道指示器状态
+    if (currentLevel.road.variableLaneIndicators) {
+      currentLevel.road.variableLaneIndicators.forEach(function(vli, idx){
+        const cycleTotal = vli.program.reduce(function(s,p){ return s + p.duration; }, 0);
+        const elapsed = (now - state.signalStart) % cycleTotal;
+        let t = elapsed;
+        for (let i = 0; i < vli.program.length; i++) {
+          if (t < vli.program[i].duration) {
+            state.variableLaneStates[idx] = vli.program[i].direction;
+            break;
+          }
+          t -= vli.program[i].duration;
+        }
+      });
+    }
   }
   function updateCar(dt){
     const car = state.car;
     if (!car || car.stopped) return;
-    // 简化：车沿 -y 方向匀速前进
-    car.y -= car.speed * dt / 1000;
+    // 速度控制（限速关卡启用）
+    if (car.speedControlEnabled && keysDown) {
+      if (keysDown.has('ArrowUp')) {
+        car.speed = Math.min(car.maxSpeed, car.speed + car.accel * dt / 1000);
+      } else if (keysDown.has('ArrowDown')) {
+        car.speed = Math.max(car.minSpeed, car.speed - car.brake * dt / 1000);
+      } else {
+        // 缓慢回归基准速度
+        if (car.speed > car.baseSpeed) car.speed = Math.max(car.baseSpeed, car.speed - 20 * dt / 1000);
+        else if (car.speed < car.baseSpeed) car.speed = Math.min(car.baseSpeed, car.speed + 30 * dt / 1000);
+      }
+    }
+    // 换道：平滑横向移动
+    if (car.laneChangeTargetX !== null) {
+      var lateralSpeed = 120;
+      var dx = car.laneChangeTargetX - car.x;
+      var maxStep = lateralSpeed * dt / 1000;
+      if (Math.abs(dx) <= maxStep) {
+        car.x = car.laneChangeTargetX;
+        car.laneChangeTargetX = null;
+        car.heading = 0;
+      } else {
+        car.x += Math.sign(dx) * maxStep;
+        car.heading = Math.sign(dx) * 0.08;
+      }
+    }
+    // 驶向目标点：到达后触发后续动作
+    if (car.moveTarget) {
+      const tx = car.moveTarget.x - car.x;
+      const ty = car.moveTarget.y - car.y;
+      const dist = Math.sqrt(tx * tx + ty * ty);
+      const step = car.speed * dt / 1000;
+      if (dist <= step) {
+        car.x = car.moveTarget.x;
+        car.y = car.moveTarget.y;
+        const next = car.moveTarget;
+        car.moveTarget = null;
+        if (next.onArrive) next.onArrive();
+      } else {
+        car.heading = Math.atan2(tx, -ty);
+        car.x += Math.sin(car.heading) * step;
+        car.y -= Math.cos(car.heading) * step;
+      }
+      return;
+    }
+    // 平滑转弯：逐步逼近目标航向
+    if (car.turnTarget !== undefined && car.turnTarget !== null) {
+      const rate = car.turnRate || Math.PI;
+      const maxTurn = rate * dt / 1000;
+      const diff = car.turnTarget - car.heading;
+      if (Math.abs(diff) <= maxTurn) {
+        car.heading = car.turnTarget;
+        car.turnTarget = null;
+        car.turnRate = null;
+        // 转弯完成：将车对齐到横向道路车道位置，沿横向道路驶出
+        if (car.heading === -Math.PI / 2 || car.heading === Math.PI / 2) {
+          if (currentLevel && currentLevel.road.intersections.length > 0) {
+            var intersection = currentLevel.road.intersections[0];
+            var chw = currentLevel.road.crossHalfWidth || 60;
+            // 对齐 y 到横向道路车道中心（路口中心偏下为右车道，偏上为左车道）
+            var laneOffset = chw * 0.4;
+            if (car.heading === -Math.PI / 2) {
+              // 左转后向西：车应在横路右侧（靠路口中心偏下）
+              car.y = intersection.center.y + laneOffset;
+              car.moveTarget = { x: -20, y: car.y };
+            } else {
+              // 右转后向东：车应在横路左侧（靠路口中心偏上）
+              car.y = intersection.center.y - laneOffset;
+              car.moveTarget = { x: canvas.width + 20, y: car.y };
+            }
+          }
+        }
+      } else {
+        car.heading += Math.sign(diff) * maxTurn;
+      }
+    }
+    car.x += Math.sin(car.heading) * car.speed * dt / 1000;
+    car.y -= Math.cos(car.heading) * car.speed * dt / 1000;
+  }
+
+  function updateNPCs(dt){
+    if (!state.npcs) return;
+    state.npcs.forEach(function(npc){
+      if (!npc.active || npc.stopped) return;
+      if (npc.moveTarget){
+        var tx = npc.moveTarget.x - npc.x;
+        var ty = npc.moveTarget.y - npc.y;
+        var dist = Math.sqrt(tx * tx + ty * ty);
+        var step = npc.speed * dt / 1000;
+        if (dist <= step){
+          npc.x = npc.moveTarget.x;
+          npc.y = npc.moveTarget.y;
+          var next = npc.moveTarget;
+          npc.moveTarget = null;
+          if (next.onArrive) next.onArrive();
+        } else {
+          npc.heading = Math.atan2(tx, -ty);
+          npc.x += Math.sin(npc.heading) * step;
+          npc.y -= Math.cos(npc.heading) * step;
+        }
+        return;
+      }
+      if (npc.turnTarget !== undefined && npc.turnTarget !== null){
+        var rate = npc.turnRate || Math.PI;
+        var maxTurn = rate * dt / 1000;
+        var diff = npc.turnTarget - npc.heading;
+        if (Math.abs(diff) <= maxTurn){
+          npc.heading = npc.turnTarget;
+          npc.turnTarget = null;
+          npc.turnRate = null;
+          var intersection = currentLevel.road.intersections[0];
+          var chw = currentLevel.road.crossHalfWidth || 60;
+          if (npc.heading === -Math.PI / 2){
+            npc.y = intersection.center.y + chw * 0.4;
+            npc.moveTarget = { x: -40, y: npc.y };
+          } else if (npc.heading === Math.PI / 2){
+            npc.y = intersection.center.y - chw * 0.4;
+            npc.moveTarget = { x: canvas.width + 40, y: npc.y };
+          }
+        } else {
+          npc.heading += Math.sign(diff) * maxTurn;
+        }
+        return;
+      }
+      npc.x += Math.sin(npc.heading) * npc.speed * dt / 1000;
+      npc.y -= Math.cos(npc.heading) * npc.speed * dt / 1000;
+      if (npc.x < -50 || npc.x > canvas.width + 50 ||
+          npc.y < -50 || npc.y > canvas.height + 50){
+        npc.active = false;
+        npc.finished = true;
+      }
+    });
+  }
+
+  function updateNPCSpawns(now){
+    if (!currentLevel || !currentLevel.npcs) return;
+    currentLevel.npcs.forEach(function(npcDef){
+      var npcId = npcDef.id;
+      if (state.npcs.some(function(n){ return n.id === npcId; })) return;
+      if (state.npcSpawnTimers[npcId + '_done']) return;
+      if (!checkNPCSpawnCondition(npcDef.spawnCondition)) return;
+      var delay = npcDef.spawnDelay || 0;
+      if (!state.npcSpawnTimers[npcId]){
+        state.npcSpawnTimers[npcId] = now;
+        if (delay > 0) return;
+      }
+      if (delay > 0 && now - state.npcSpawnTimers[npcId] < delay) return;
+      var npc = {
+        id: npcDef.id,
+        x: npcDef.startPos.x,
+        y: npcDef.startPos.y,
+        heading: npcDef.startPos.heading,
+        speed: npcDef.speed || 200,
+        stopped: false,
+        color: npcDef.color || '#3b7dd8',
+        label: npcDef.label || 'NPC',
+        category: npcDef.category || 'car',
+        emergency: npcDef.emergency || false,
+        turnTarget: null,
+        turnRate: null,
+        moveTarget: null,
+        active: true,
+        spawned: true,
+        finished: false
+      };
+      state.npcs.push(npc);
+      state.npcSpawnTimers[npcId + '_done'] = true;
+      var intersection = currentLevel.road.intersections[0];
+      var road = currentLevel.road;
+      NPC_PATH_SCRIPTS[npcDef.pathScript](npc, intersection, road);
+    });
+  }
+
+  function checkNPCSpawnCondition(cond){
+    if (cond.type === 'signal-state') {
+      return state.signalStates[cond.signalId] === cond.state;
+    }
+    if (cond.type === 'player-in-zone'){
+      var dx = state.car.x - cond.x;
+      var dy = state.car.y - cond.y;
+      return Math.sqrt(dx * dx + dy * dy) < cond.radius;
+    }
+    if (cond.type === 'always') return true;
+    return false;
   }
 
   function checkDecisionZone(){
     if (!state.car || !currentLevel) return;
     if (state.mode !== 'playing') return;
+    if (state.car.moveTarget) return;
+    // 等待区内由玩家主动操作评估，不自动触发 dp-turn
+    if (state.car.inWaitingZone) return;
+    // 让行等待中：NPC/行人/特种车辆 已通过冲突区域后允许重新触发决策点
+    if (state._yieldWaitActive) {
+      if (anyNPCInOrApproachingZone() || anyPedestrianInOrApproachingZone() || anyEmergencyVehicleApproaching()) {
+        return;
+      }
+      state._yieldWaitActive = false;
+    }
     for (const dp of currentLevel.decisionPoints) {
+      if (state.resolvedDPs[dp.id]) continue;
+      // 仅 waitForGreen 标记的决策点需要等信号灯变绿才触发
+      if (dp.waitForGreen && dp.signalBindings && dp.signalBindings.length > 0) {
+        const sigId = dp.signalBindings[0];
+        const sigState = state.signalStates[sigId];
+        if (!sigState) continue;
+        const isGreen = sigState.endsWith('-green') || sigState === 'green';
+        if (!isGreen) continue;
+      }
       const dx = state.car.x - dp.trigger.x;
       const dy = state.car.y - dp.trigger.y;
       if (Math.sqrt(dx*dx + dy*dy) < dp.trigger.radius) {
@@ -746,24 +3354,503 @@
 
   function update(dt){
     updateSignals(performance.now());
+    updateNPCSpawns(performance.now());
     if (state.mode === 'playing') {
       updateCar(dt);
+      updateNPCs(dt);
+      if (currentLevel && currentLevel._continuousEval) {
+        checkRoadMarkingViolations();
+        checkSpeedLimitViolation();
+      }
       checkDecisionZone();
+      checkLevelComplete();
     } else if (state.mode === 'awaiting-decision') {
-      // 等待玩家决策，车完全静止（不调用 updateCar）
+      updateNPCs(dt);
     }
   }
   function render(){
-    drawRoad(currentLevel && currentLevel.road);
+    var road = currentLevel && currentLevel.road;
+    drawRoad(road);
+    drawSpeedZones(road);
+    drawRailroadCrossings(road);
+    drawVariableLaneIndicators(road);
+    drawSigns(currentLevel && currentLevel.signs);
     drawLights(currentLevel && currentLevel.signals, state.signalStates);
     drawCar(state.car);
+    if (state.npcs) state.npcs.forEach(drawNPCCar);
     ctx.fillStyle = '#fff';
     ctx.font = '16px sans-serif';
     ctx.fillText('mode = ' + state.mode, 20, 30);
     updateHUD();
   }
+  function drawSigns(signs){
+    if (!signs || signs.length === 0) return;
+    signs.forEach(function(sign){
+      var x = sign.pos.x, y = sign.pos.y, r = 24;
+      // 标志杆
+      ctx.strokeStyle = '#888';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(x, y + r);
+      ctx.lineTo(x, y + r + 50);
+      ctx.stroke();
 
-  // ===== INPUT =====
+      if (sign.type === 'no-right-on-red') {
+        // 白底圆牌
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+        // 红圈
+        ctx.strokeStyle = '#c33';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.stroke();
+        // 红色斜杠
+        ctx.strokeStyle = '#c33';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(x - 14, y + 14);
+        ctx.lineTo(x + 14, y - 14);
+        ctx.stroke();
+        // 右转箭头
+        ctx.fillStyle = '#222';
+        ctx.beginPath();
+        ctx.moveTo(x + 8, y - 3);
+        ctx.lineTo(x - 2, y - 9);
+        ctx.lineTo(x - 2, y + 3);
+        ctx.closePath();
+        ctx.fill();
+        // 文字
+        ctx.fillStyle = '#c33';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('红灯禁右', x, y + r + 14);
+        ctx.textAlign = 'start';
+      }
+      if (sign.type === 'no-u-turn') {
+        // 白底圆牌
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+        // 红圈
+        ctx.strokeStyle = '#c33';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.stroke();
+        // 红色斜杠
+        ctx.strokeStyle = '#c33';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(x - 14, y + 14);
+        ctx.lineTo(x + 14, y - 14);
+        ctx.stroke();
+        // 掉头U形箭头
+        ctx.strokeStyle = '#222';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(x - 7, y + 8);
+        ctx.lineTo(x - 7, y - 3);
+        ctx.arc(x, y - 3, 7, Math.PI, 0, true);
+        ctx.lineTo(x + 7, y + 8);
+        ctx.stroke();
+        ctx.fillStyle = '#222';
+        ctx.beginPath();
+        ctx.moveTo(x + 7, y + 8);
+        ctx.lineTo(x + 3, y + 2);
+        ctx.lineTo(x + 11, y + 2);
+        ctx.closePath();
+        ctx.fill();
+        // 文字
+        ctx.fillStyle = '#c33';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('禁止掉头', x, y + r + 14);
+        ctx.textAlign = 'start';
+      }
+      if (sign.type === 'left-turn-waiting-zone') {
+        // 蓝底方牌
+        var w = 50, h = 40;
+        ctx.fillStyle = '#1a5fb4';
+        ctx.fillRect(x - w/2, y - h/2, w, h);
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x - w/2, y - h/2, w, h);
+        // 左转箭头 + 待转区文字
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 9px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('左转', x, y - 4);
+        ctx.fillText('待转区', x, y + 8);
+        ctx.textAlign = 'start';
+      }
+      if (sign.type === 'right-turn-waiting-zone') {
+        // 蓝底方牌
+        var w = 50, h = 40;
+        ctx.fillStyle = '#1a5fb4';
+        ctx.fillRect(x - w/2, y - h/2, w, h);
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x - w/2, y - h/2, w, h);
+        // 右转箭头 + 待转区文字
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 9px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('右转', x, y - 4);
+        ctx.fillText('待转区', x, y + 8);
+        ctx.textAlign = 'start';
+      }
+      if (sign.type === 'speed-limit') {
+        // 限速标志：红圈白底+数字
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#c33';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = '#222';
+        ctx.font = 'bold 16px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('' + (sign.limit || 40), x, y + 1);
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillStyle = '#c33';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText('限速', x, y + r + 14);
+        ctx.textAlign = 'start';
+      }
+      if (sign.type === 'yield') {
+        // 让行标志：倒三角白底红边
+        var s = r * 1.2;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.moveTo(x, y + s * 0.7);
+        ctx.lineTo(x - s * 0.7, y - s * 0.4);
+        ctx.lineTo(x + s * 0.7, y - s * 0.4);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = '#c33';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(x, y + s * 0.55);
+        ctx.lineTo(x - s * 0.55, y - s * 0.3);
+        ctx.lineTo(x + s * 0.55, y - s * 0.3);
+        ctx.closePath();
+        ctx.stroke();
+        ctx.fillStyle = '#c33';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('减速让行', x, y + r + 14);
+        ctx.textAlign = 'start';
+      }
+      if (sign.type === 'stop-sign') {
+        // 停车让行标志：红色八边形+白字"停"
+        var sr = r * 0.95;
+        ctx.fillStyle = '#c33';
+        ctx.beginPath();
+        var sides = 8;
+        for (var si = 0; si < sides; si++) {
+          var angle = (Math.PI * 2 * si / sides) - Math.PI / 8;
+          var px = x + sr * Math.cos(angle);
+          var py = y + sr * Math.sin(angle);
+          if (si === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 20px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('停', x, y + 1);
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillStyle = '#c33';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText('停车让行', x, y + r + 14);
+        ctx.textAlign = 'start';
+      }
+      if (sign.type === 'no-left-turn') {
+        // 禁止左转标志：白底圆牌+红圈+左转箭头+红斜杠
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#c33';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.stroke();
+        // 左转箭头
+        ctx.strokeStyle = '#222';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(x + 5, y + 8);
+        ctx.lineTo(x + 5, y - 6);
+        ctx.arc(x, y - 6, 5, 0, -Math.PI / 2, true);
+        ctx.lineTo(x - 5, y - 3);
+        ctx.stroke();
+        ctx.fillStyle = '#222';
+        ctx.beginPath();
+        ctx.moveTo(x - 8, y - 1);
+        ctx.lineTo(x - 5, y - 6);
+        ctx.lineTo(x - 2, y - 1);
+        ctx.closePath();
+        ctx.fill();
+        // 红色斜杠
+        ctx.strokeStyle = '#c33';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(x - r * 0.55, y + r * 0.55);
+        ctx.lineTo(x + r * 0.55, y - r * 0.55);
+        ctx.stroke();
+        ctx.fillStyle = '#c33';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('禁止左转', x, y + r + 14);
+        ctx.textAlign = 'start';
+      }
+    });
+  }
+  // 铁道路口渲染
+  function drawRailroadCrossings(road){
+    if (!road || !road.railroadCrossings) return;
+    var minX = Infinity, maxX = -Infinity;
+    road.lanes.forEach(function(lane){
+      if (lane.x - lane.w/2 < minX) minX = lane.x - lane.w/2;
+      if (lane.x + lane.w/2 > maxX) maxX = lane.x + lane.w/2;
+    });
+    road.railroadCrossings.forEach(function(rr){
+      var y = rr.pos.y;
+      var rrState = state.railroadStates[rr.id] || 'barrier-up';
+      // 铁轨
+      ctx.strokeStyle = '#666';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(minX, y - 4); ctx.lineTo(maxX, y - 4);
+      ctx.moveTo(minX, y + 4); ctx.lineTo(maxX, y + 4);
+      ctx.stroke();
+      // 枕木
+      ctx.lineWidth = 2;
+      for (var tx = minX; tx <= maxX; tx += 15) {
+        ctx.beginPath(); ctx.moveTo(tx, y - 6); ctx.lineTo(tx, y + 6); ctx.stroke();
+      }
+      // 停车线
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(minX, y + 12, maxX - minX, 3);
+      // 两侧栏杆杆
+      ctx.fillStyle = '#888';
+      ctx.fillRect(minX - 14, y - 25, 6, 50);
+      ctx.fillRect(maxX + 8, y - 25, 6, 50);
+      if (rrState === 'barrier-down') {
+        // 栏杆横放
+        ctx.fillStyle = '#c33';
+        var halfW = (maxX - minX + 22) / 2;
+        ctx.fillRect(minX - 14, y - 2, halfW, 5);
+        ctx.fillRect(maxX + 8 - halfW + 6, y - 2, halfW, 5);
+        // 白条纹
+        ctx.fillStyle = '#fff';
+        for (var sx = minX - 12; sx < maxX + 12; sx += 20) {
+          ctx.fillRect(sx, y - 1, 8, 3);
+        }
+        // 闪红灯
+        var flashOn = Math.floor(performance.now() / 400) % 2 === 0;
+        [[minX - 11, y - 22], [maxX + 11, y - 22]].forEach(function(p){
+          ctx.beginPath();
+          ctx.arc(p[0], p[1], 5, 0, Math.PI * 2);
+          ctx.fillStyle = flashOn ? '#f00' : '#400';
+          ctx.fill();
+        });
+      } else {
+        // 栏杆竖起
+        ctx.fillStyle = '#c33';
+        ctx.fillRect(minX - 14, y - 25, 6, 18);
+        ctx.fillRect(maxX + 8, y - 25, 6, 18);
+        // 绿灯
+        [[minX - 11, y - 22], [maxX + 11, y - 22]].forEach(function(p){
+          ctx.beginPath();
+          ctx.arc(p[0], p[1], 5, 0, Math.PI * 2);
+          ctx.fillStyle = '#3c3';
+          ctx.fill();
+        });
+      }
+    });
+  }
+  // 可变车道LED指示器渲染
+  function drawVariableLaneIndicators(road){
+    if (!road || !road.variableLaneIndicators) return;
+    road.variableLaneIndicators.forEach(function(vli, idx){
+      var dir = state.variableLaneStates[idx] || 'forward';
+      var x = vli.pos.x, y = vli.pos.y;
+      // 悬挂杆
+      ctx.strokeStyle = '#888';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(x, y + 18);
+      ctx.lineTo(x, y + 55);
+      ctx.stroke();
+      // LED 牌
+      ctx.fillStyle = '#111';
+      ctx.fillRect(x - 22, y - 14, 44, 30);
+      ctx.strokeStyle = '#555';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x - 22, y - 14, 44, 30);
+      // 绿色箭头
+      drawArrow(x, y, dir, '#0f0');
+      // 标签
+      ctx.fillStyle = '#fff';
+      ctx.font = '9px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('可变车道', x, y + 32);
+      ctx.textAlign = 'start';
+    });
+  }
+  // 限速区域路面着色
+  function drawSpeedZones(road){
+    if (!road || !road.speedZones) return;
+    var minX = Infinity, maxX = -Infinity;
+    road.lanes.forEach(function(lane){
+      if (lane.x - lane.w/2 < minX) minX = lane.x - lane.w/2;
+      if (lane.x + lane.w/2 > maxX) maxX = lane.x + lane.w/2;
+    });
+    road.speedZones.forEach(function(sz){
+      ctx.fillStyle = 'rgba(255, 200, 0, 0.08)';
+      ctx.fillRect(minX, sz.yEnd, maxX - minX, sz.yStart - sz.yEnd);
+    });
+  }
+
+  // ===== CONTINUOUS EVALUATION =====
+  function pointInPolygon(x, y, points){
+    var inside = false;
+    for (var i = 0, j = points.length - 1; i < points.length; j = i++) {
+      var xi = points[i].x, yi = points[i].y;
+      var xj = points[j].x, yj = points[j].y;
+      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+  function checkRoadMarkingViolations(){
+    if (!currentLevel || !currentLevel.road) return;
+    var car = state.car;
+    if (!car || car.stopped) return;
+    var carHalfW = 9;
+    // 压实线检测
+    if (currentLevel.road.solidLines) {
+      currentLevel.road.solidLines.forEach(function(sl){
+        var key = sl.x1 + ',' + sl.y1;
+        if (state._solidLineViolationRecorded && state._solidLineViolationRecorded[key]) return;
+        if (sl.x1 === sl.x2) {
+          var lineX = sl.x1;
+          // 车中心跨过实线（距离小于车半宽）才触发，避免车道内正常行驶误判
+          if (car.y >= sl.y1 && car.y <= sl.y2) {
+            if (Math.abs(car.x - lineX) < carHalfW) {
+              applyDeduct(SCORE_CONFIG.deductBySeverity.normal);
+              state._solidLineViolationRecorded = state._solidLineViolationRecorded || {};
+              state._solidLineViolationRecorded[key] = true;
+              transition('explaining');
+              showExplanation('solid-line-crossing');
+            }
+          }
+        }
+      });
+    }
+    // 导流区域检测
+    if (currentLevel.road.guideAreas) {
+      currentLevel.road.guideAreas.forEach(function(ga, idx){
+        if (state._guideAreaViolationRecorded && state._guideAreaViolationRecorded[idx]) return;
+        if (pointInPolygon(car.x, car.y, ga.points)) {
+          applyDeduct(SCORE_CONFIG.deductBySeverity.major);
+          state._guideAreaViolationRecorded = state._guideAreaViolationRecorded || {};
+          state._guideAreaViolationRecorded[idx] = true;
+          transition('explaining');
+          showExplanation('guide-area-driving');
+        }
+      });
+    }
+  }
+  function checkSpeedLimitViolation(){
+    if (!currentLevel || !currentLevel.road.speedZones) return;
+    var car = state.car;
+    if (!car || car.stopped) return;
+    currentLevel.road.speedZones.forEach(function(sz){
+      if (car.y <= sz.yStart && car.y >= sz.yEnd) {
+        if (car.speed > sz.limit) {
+          if (!state._speedViolationRecorded || !state._speedViolationRecorded[sz.id]) {
+            applyDeduct(SCORE_CONFIG.deductBySeverity.normal);
+            state._speedViolationRecorded = state._speedViolationRecorded || {};
+            state._speedViolationRecorded[sz.id] = true;
+            transition('explaining');
+            showExplanation('speeding');
+          }
+        } else {
+          if (state._speedViolationRecorded) state._speedViolationRecorded[sz.id] = false;
+        }
+      }
+    });
+  }
+  function isNPCInConflictZone(npc, zone){
+    return npc.active && !npc.finished &&
+      npc.x >= zone.x && npc.x <= zone.x + zone.w &&
+      npc.y >= zone.y && npc.y <= zone.y + zone.h;
+  }
+  function isNPCApproachingZone(npc, zone, threshold){
+    if (isNPCInConflictZone(npc, zone)) return true;
+    if (!npc.active || npc.finished) return false;
+    var futureX = npc.x + Math.sin(npc.heading) * threshold;
+    var futureY = npc.y - Math.cos(npc.heading) * threshold;
+    return futureX >= zone.x && futureX <= zone.x + zone.w &&
+           futureY >= zone.y && futureY <= zone.y + zone.h;
+  }
+  function getNPCConflictZone(){
+    if (!currentLevel || !currentLevel.road.intersections.length) return null;
+    var intersection = currentLevel.road.intersections[0];
+    var chw = currentLevel.road.crossHalfWidth || 60;
+    return {
+      x: intersection.center.x - chw,
+      y: intersection.center.y - chw,
+      w: chw * 2,
+      h: chw * 2
+    };
+  }
+  function anyNPCInOrApproachingZone(){
+    if (!state.npcs || !state.npcs.length) return false;
+    var zone = getNPCConflictZone();
+    if (!zone) return false;
+    for (var i = 0; i < state.npcs.length; i++){
+      if (isNPCApproachingZone(state.npcs[i], zone, 120)) return true;
+    }
+    return false;
+  }
+  function anyPedestrianInOrApproachingZone(){
+    if (!state.npcs || !state.npcs.length) return false;
+    var zone = getNPCConflictZone();
+    if (!zone) return false;
+    for (var i = 0; i < state.npcs.length; i++){
+      var npc = state.npcs[i];
+      if (npc.category !== 'pedestrian') continue;
+      if (isNPCApproachingZone(npc, zone, 60)) return true;
+    }
+    return false;
+  }
+  function anyEmergencyVehicleApproaching(){
+    if (!state.npcs || !state.npcs.length) return false;
+    for (var i = 0; i < state.npcs.length; i++){
+      var npc = state.npcs[i];
+      if (!npc.emergency) continue;
+      if (npc.active && !npc.finished) return true;
+    }
+    return false;
+  }
   const hudEl = document.getElementById('hud');
   function updateHUD(){
     if (!currentLevel) return;
@@ -772,6 +3859,39 @@
     document.getElementById('hud-level').textContent = currentLevel.title;
     document.getElementById('hud-score').textContent = state.score;
     document.getElementById('hud-pass').textContent = '通过线: ' + currentLevel.passScore;
+    // 等待区提示
+    var wEl = document.getElementById('hud-waiting');
+    if (state.car.inWaitingZone && currentLevel) {
+      var dir = state.car.waitingZoneDir;
+      var turnName = dir === 'left' ? '左转' : '右转';
+      var turnSigState = null;
+      currentLevel.signals.forEach(function(sig){
+        if (sig.type === 'arrow') {
+          var st = state.signalStates[sig.id];
+          if (dir === 'left' && (st === 'left-green' || st === 'left-red' || st === 'all-red')) turnSigState = st;
+          if (dir === 'right' && (st === 'right-green' || st === 'right-red' || st === 'all-red')) turnSigState = st;
+        }
+      });
+      var sigText = turnSigState === (dir+'-green') ? '🟢 绿灯' : '🔴 红灯';
+      wEl.textContent = '等待区 · ' + turnName + sigText + ' · 按' + (dir==='left'?'←左转':'→右转') + '键转弯';
+      wEl.style.display = 'block';
+    } else {
+      wEl.style.display = 'none';
+    }
+    // 限速关卡速度显示
+    if (state.car.speedControlEnabled && currentLevel.road.speedZones) {
+      var currentLimit = null;
+      currentLevel.road.speedZones.forEach(function(sz){
+        if (state.car.y <= sz.yStart && state.car.y >= sz.yEnd) currentLimit = sz.limit;
+      });
+      var speedText = '速度: ' + Math.round(state.car.speed);
+      if (currentLimit) {
+        speedText += ' / 限速: ' + currentLimit;
+        if (state.car.speed > currentLimit) speedText += ' ⚠超速';
+      }
+      wEl.textContent = speedText;
+      wEl.style.display = 'block';
+    }
   }
   document.getElementById('hud-pause').addEventListener('click', function(){
     if (state.mode === 'paused') transition('playing');
@@ -782,38 +3902,331 @@
     if (state.mode === 'awaiting-decision') {
       decide(action);
     } else if (state.mode === 'playing') {
-      // 玩家在行驶中可主动停车（Space）
-      if (action === 'stop') state.car.stopped = !state.car.stopped;
+      var car = state.car;
+      if (action === 'stop') {
+        if (car.inWaitingZone) {
+          // 等待区内保持停车，不可解除
+          return;
+        }
+        car.stopped = !car.stopped;
+      } else if (action === 'lane-left') {
+        changeLane(-1);
+      } else if (action === 'lane-right') {
+        changeLane(1);
+      } else if (car.inWaitingZone && ['left-turn','right-turn','pass-through','u-turn'].indexOf(action) >= 0) {
+        evaluateWaitingZoneAction(action);
+      }
     }
+  }
+  // 等待区内操作评估：基于信号灯实时状态判断
+  function evaluateWaitingZoneAction(action){
+    var car = state.car;
+    if (!currentLevel) return;
+    var dir = car.waitingZoneDir; // 'left', 'right', or 'yellow'
+    var turnAction = dir + '-turn'; // 'left-turn' or 'right-turn'
+    var intersection = currentLevel.road.intersections[0];
+    var chw = currentLevel.road.crossHalfWidth || 60;
+    // 查找转弯箭头信号灯状态
+    var turnSigState = null;
+    currentLevel.signals.forEach(function(sig){
+      var st = state.signalStates[sig.id];
+      if (dir === 'left' && sig.type === 'arrow' && (st === 'left-green' || st === 'left-red' || st === 'all-red')) turnSigState = st;
+      if (dir === 'right' && sig.type === 'arrow' && (st === 'right-green' || st === 'right-red' || st === 'all-red')) turnSigState = st;
+      if (dir === 'yellow' && sig.type === 'circle' && (st === 'yellow-flash' || st === 'green' || st === 'red')) turnSigState = st;
+    });
+    // 黄灯等待区：黄闪/绿灯时可转弯，红灯时不可
+    if (dir === 'yellow') {
+      var isYellowOrGreen = turnSigState === 'yellow-flash' || turnSigState === 'green';
+      if ((action === 'left-turn' || action === 'right-turn') && isYellowOrGreen) {
+        car.inWaitingZone = false;
+        car.waitingZoneDir = null;
+        car.stopped = false;
+        car.moveTarget = null;
+        car.turnTarget = action === 'right-turn' ? Math.PI / 2 : -Math.PI / 2;
+        car.turnRate = car.speed / chw;
+        state.resolvedDPs['dp-wait'] = true;
+      } else if ((action === 'left-turn' || action === 'right-turn') && !isYellowOrGreen) {
+        applyDeduct(SCORE_CONFIG.deductBySeverity.normal);
+        transition('explaining');
+        showExplanation('waiting-zone-turn-premature');
+      } else {
+        applyDeduct(SCORE_CONFIG.deductBySeverity.major);
+        transition('explaining');
+        showExplanation('wrong-lane-for-action');
+      }
+      return;
+    }
+    // 左/右转等待区评估
+    if (action === turnAction) {
+      if (turnSigState === dir + '-green') {
+        // 箭头绿灯→正确转弯
+        car.inWaitingZone = false;
+        car.waitingZoneDir = null;
+        car.stopped = false;
+        car.moveTarget = null;
+        car.turnTarget = action === 'right-turn' ? Math.PI / 2 : -Math.PI / 2;
+        car.turnRate = car.speed / chw;
+        // 标记 dp-turn 已解决
+        currentLevel.decisionPoints.forEach(function(dp){
+          if (dp.id === 'dp-turn') state.resolvedDPs['dp-turn'] = true;
+        });
+      } else {
+        // 箭头红灯或 all-red→不得转弯
+        applyDeduct(SCORE_CONFIG.deductBySeverity.normal);
+        transition('explaining');
+        showExplanation('waiting-zone-turn-premature');
+      }
+    } else {
+      // 非等待区方向操作（如等待区里按直行/反向转弯）→错误
+      applyDeduct(SCORE_CONFIG.deductBySeverity.major);
+      transition('explaining');
+      showExplanation('wrong-lane-for-action');
+    }
+  }
+  function changeLane(direction){
+    var car = state.car;
+    if (!car || !currentLevel) return;
+    if (car.laneChangeTargetX !== null) return;
+    if (car.moveTarget) return;
+    var lanes = currentLevel.road.lanes;
+    var newIdx = car.currentLaneIdx + direction;
+    if (newIdx < 0 || newIdx >= lanes.length) return;
+    // 实线阻挡：变道跨越实线时禁止
+    if (currentLevel.road.solidLines) {
+      var currentLaneX = lanes[car.currentLaneIdx].x;
+      var newLaneX = lanes[newIdx].x;
+      var wouldCrossSolid = currentLevel.road.solidLines.some(function(sl){
+        if (sl.x1 === sl.x2) {
+          var lineX = sl.x1;
+          var inYRange = car.y >= sl.y1 && car.y <= sl.y2;
+          var crossesX = (currentLaneX < lineX && newLaneX > lineX) || (currentLaneX > lineX && newLaneX < lineX);
+          return inYRange && crossesX;
+        }
+        return false;
+      });
+      if (wouldCrossSolid) return;
+    }
+    car.currentLaneIdx = newIdx;
+    car.laneChangeTargetX = lanes[newIdx].x;
   }
   function decide(action){
     const dp = state.currentDecisionPoint;
     if (!dp) return;
+    // 多车道时检查车道合规性
+    if (currentLevel.road.lanes.length > 1) {
+      const currentLane = currentLevel.road.lanes[state.car.currentLaneIdx];
+      const laneType = currentLane.type || 'forward';
+      if (!isLaneCorrectForAction(laneType, action)) {
+        applyDeduct(SCORE_CONFIG.deductBySeverity.major);
+        transition('explaining');
+        showExplanation('wrong-lane-for-action');
+        return;
+      }
+    }
+    // 停车等待场景不标记已解决，以便信号变化后重新触发
+    // dp-slow/dp-proceed 除外：停车观察后应标记完成，继续下一决策点
+    var stopAndWaitDPs = ['dp-enter', 'dp-stop', 'dp-railroad'];
+    var isStopAndWait = action === 'stop' && stopAndWaitDPs.indexOf(dp.id) >= 0;
+    // dp-yield 的让行等待：
+    // 红灯时 stop = stop-and-wait（等绿灯再触发）
+    // 绿灯+NPC在场时 stop = stop-and-wait（等 NPC 通过再触发）
+    // 绿灯+行人/特种车辆在场时 stop = stop-and-wait
+    // 绿灯+无NPC时 stop = 普通 stop（标记已解决）
+    // 无信号灯时 stop = stop-and-wait（等 NPC 通过再触发）
+    if (action === 'stop' && dp.id === 'dp-yield') {
+      var sigState = findAnySignalState(dp, signalStates);
+      if (!sigState || sigState === 'red') {
+        isStopAndWait = true;
+      } else if (anyNPCInOrApproachingZone() || anyPedestrianInOrApproachingZone() || anyEmergencyVehicleApproaching()) {
+        isStopAndWait = true;
+      }
+    }
+    // dp-grid / 停车让行标志等也是 stop-and-wait（有NPC在场时）
+    if (action === 'stop' && dp.id === 'dp-grid') {
+      if (anyNPCInOrApproachingZone() || anyPedestrianInOrApproachingZone()) {
+        isStopAndWait = true;
+      }
+    }
+    // dp-sign-stop / dp-flash-stop：停车后标记已解决，让 dp-proceed 触发
+    if (action === 'stop' && (dp.id === 'dp-sign-stop' || dp.id === 'dp-flash-stop')) {
+      // 停车即完成本 DP，不需要 stop-and-wait
+      isStopAndWait = false;
+    }
+    if (!isStopAndWait) state.resolvedDPs[dp.id] = true;
     const result = evaluateDecision(dp, action, state.signalStates);
     if (result.deduct > 0) {
       applyDeduct(result.deduct);
       transition('explaining');
       showExplanation(result.explanationKey);
-      // 讲解关闭后由 showExplanation 内的回调切回 playing
     } else {
-      // 正确决策：车通过路口
-      proceedThrough(action);
-      state.currentDecisionPoint = null;
-      transition('playing');
-      checkLevelComplete();
+      // 正确决策
+      hideDecisionPrompt();
+      if (isStopAndWait) {
+        // 停车等待：原地停车等信号变化/NPC通过，dp 不标记已解决以便重新触发
+        state.car.stopped = true;
+        state.car.moveTarget = null;
+        state.car.turnTarget = null;
+        state.currentDecisionPoint = null;
+        if (dp.id === 'dp-yield') state._yieldWaitActive = true;
+        transition('playing');
+      } else if (action === 'stop') {
+        // 停车但非等待场景（如 dp-slow 停车观察）：原地停车，标记已解决
+        state.car.stopped = true;
+        state.car.moveTarget = null;
+        state.car.turnTarget = null;
+        state.currentDecisionPoint = null;
+        transition('playing');
+        checkLevelComplete();
+      } else {
+        proceedThrough(action);
+        state.currentDecisionPoint = null;
+        // 非等待区动作通过路口时，标记同一路口的等待区 DP 为已解决
+        // （玩家未进入等待区，后续 dp-turn 不会触发也不需要触发）
+        if (dp.id === 'dp-enter' && dp.atIntersection) {
+          currentLevel.decisionPoints.forEach(function(d){
+            if (d.id === 'dp-turn' && d.atIntersection === dp.atIntersection) {
+              state.resolvedDPs[d.id] = true;
+            }
+          });
+        }
+        transition('playing');
+        checkLevelComplete();
+      }
     }
   }
+  function isLaneCorrectForAction(laneType, action){
+    if (action === 'stop') return true;
+    if (laneType === 'variable') {
+      var effectiveType = 'forward';
+      if (currentLevel && currentLevel.road.variableLaneIndicators) {
+        var indicatorDir = state.variableLaneStates[0];
+        if (indicatorDir === 'left') effectiveType = 'left-turn';
+        else if (indicatorDir === 'right') effectiveType = 'right-turn';
+      }
+      laneType = effectiveType;
+    }
+    if (action === 'pass-through') return laneType === 'forward';
+    if (action === 'left-turn') return laneType === 'left-turn';
+    if (action === 'right-turn') return laneType === 'right-turn';
+    if (action === 'u-turn') return laneType === 'left-turn';
+    return false;
+  }
   function proceedThrough(action){
-    // 简化：让车继续向北，离开决策区
-    state.car.y -= 120;
-    state.car.stopped = false;
+    const car = state.car;
+    const dp = state.currentDecisionPoint;
+    const intersection = dp && dp.atIntersection
+      ? currentLevel.road.intersections.find(function(it){ return it.id === dp.atIntersection; })
+      : (currentLevel.road.intersections[0] || null);
+    const chw = currentLevel.road.crossHalfWidth || 60;
+    const laneX = currentLevel.road.lanes[car.currentLaneIdx].x;
+    car.stopped = false;
+
+    if ((action === 'right-turn' || action === 'left-turn') && intersection) {
+      // 待转区/等待区阶段：驶入等待区位置后停下
+      var wz = null;
+      if (currentLevel.road.waitingZones) {
+        wz = currentLevel.road.waitingZones.find(function(z){
+          return (action === 'left-turn' && z.type === 'left-turn-wait') ||
+                 (action === 'right-turn' && z.type === 'right-turn-wait') ||
+                 ((action === 'left-turn' || action === 'right-turn') && z.type === 'yellow-turn-wait');
+        });
+      }
+      // 车已在等待区内（dp-turn 阶段）：直接转弯
+      if (wz && car.y <= intersection.center.y + chw && car.y >= intersection.center.y - chw) {
+        car.moveTarget = null;
+        car.turnTarget = action === 'right-turn' ? Math.PI / 2 : -Math.PI / 2;
+        car.turnRate = car.speed / chw;
+        car.stopped = false;
+        car.inWaitingZone = false;
+        car.waitingZoneDir = null;
+        return;
+      }
+      // 车在路口外（dp-enter 阶段）：驶入等待区
+      if (wz) {
+        var wzDir = wz.type === 'left-turn-wait' ? 'left' : (wz.type === 'right-turn-wait' ? 'right' : 'yellow');
+        car.moveTarget = {
+          x: wz.pos.x,
+          y: wz.pos.y,
+          onArrive: function(){
+            car.stopped = true;
+            car.inWaitingZone = true;
+            car.waitingZoneDir = wzDir;
+          }
+        };
+        car.turnTarget = null;
+        return;
+      }
+      // 兼容旧逻辑（无 waitingZone 数据时）
+      if (dp.id === 'dp-enter' && action === 'left-turn') {
+        car.moveTarget = {
+          x: laneX,
+          y: intersection.center.y + 5,
+          onArrive: function(){
+            car.stopped = true;
+            car.inWaitingZone = true;
+            car.waitingZoneDir = 'left';
+          }
+        };
+        car.turnTarget = null;
+        return;
+      }
+      // 车已在路口内（待转区后）：直接开始弧线转弯
+      const entryY = intersection.center.y + chw;
+      if (car.y <= entryY) {
+        car.moveTarget = null;
+        car.turnTarget = action === 'right-turn' ? Math.PI / 2 : -Math.PI / 2;
+        car.turnRate = car.speed / chw;
+      } else {
+        // 车在路口外：先驶到路口入口再转弯
+        car.moveTarget = {
+          x: laneX,
+          y: entryY,
+          onArrive: function(){
+            car.turnTarget = action === 'right-turn' ? Math.PI / 2 : -Math.PI / 2;
+            car.turnRate = car.speed / chw;
+          }
+        };
+      }
+    } else if ((action === 'stop' || action === 'pass-through') && intersection) {
+      car.moveTarget = {
+        x: laneX,
+        y: intersection.center.y + 5,
+        onArrive: function(){ car.stopped = (action === 'stop'); }
+      };
+      car.turnTarget = null;
+    } else if (action === 'u-turn' && intersection) {
+      car.moveTarget = {
+        x: laneX,
+        y: intersection.center.y + 5,
+        onArrive: function(){
+          car.turnTarget = Math.PI;
+          car.turnRate = car.speed / chw;
+        }
+      };
+    } else {
+      car.moveTarget = null;
+      car.turnTarget = null;
+      car.stopped = (action === 'stop');
+    }
   }
   function checkLevelComplete(){
     const target = currentLevel.completion.intersections || 1;
     state.intersectionsCleared = state.intersectionsCleared || 0;
-    if (state.car.y < 50) {
-      const dpsResolved = currentLevel.decisionPoints.length;
-      state.intersectionsCleared = dpsResolved;
+    const car = state.car;
+    const offScreen = car.x < -20 || car.x > canvas.width + 20 || car.y < -20 || car.y > canvas.height + 20;
+    if (offScreen) {
+      // 检查是否所有决策点都已通过玩家决策解决
+      var unresolved = 0;
+      currentLevel.decisionPoints.forEach(function(dp){
+        if (!state.resolvedDPs[dp.id]) unresolved++;
+      });
+      if (unresolved > 0) {
+        // 有决策点未触发即通过路口→判为闯红灯/未停车
+        applyDeduct(SCORE_CONFIG.deductBySeverity.critical);
+        state.mode = 'level-failed';
+        showLevelFail();
+        return;
+      }
       const pass = checkPass(state.score, currentLevel.passScore);
       if (pass) { state.mode = 'level-complete'; showLevelComplete(); }
       else { state.mode = 'level-failed'; showLevelFail(); }
@@ -823,6 +4236,12 @@
   const dpText = document.getElementById('dp-text');
   function showDecisionPrompt(dp){
     dpText.textContent = dp.prompt;
+    var hintEl = dpEl.querySelector('div:last-child');
+    if (currentLevel.road.lanes.length > 1) {
+      hintEl.textContent = 'Space 停/行 · ↑ 直行 · ← 左转 · → 右转 · A/D 变道 · U 掉头';
+    } else {
+      hintEl.textContent = 'Space 停/行 · ↑ 直行 · ← 左转 · → 右转 · U 掉头';
+    }
     dpEl.style.display = 'block';
   }
   function hideDecisionPrompt(){ dpEl.style.display = 'none'; }
@@ -837,22 +4256,66 @@
     emEl.style.display = 'block';
   }
   document.getElementById('em-close').addEventListener('click', function(){
+    const dp = state.currentDecisionPoint;
+    var dpId = dp ? dp.id : null;
+    // 操作错误时一律不标记已解决，以便纠正后重新触发
     emEl.style.display = 'none';
-    proceedThrough('pass-through');
     state.currentDecisionPoint = null;
     hideDecisionPrompt();
+    // 不及格时直接结束本关
+    if (!checkPass(state.score, currentLevel.passScore)) {
+      state.mode = 'level-failed';
+      showLevelFail();
+      return;
+    }
+    // 等待区内操作错误：留在等待区继续等待
+    if (state.car.inWaitingZone) {
+      transition('playing');
+      return;
+    }
+    // 限速区域超速：将速度降至限速值以内
+    if (state.car.speedControlEnabled && currentLevel.road.speedZones) {
+      currentLevel.road.speedZones.forEach(function(sz){
+        if (state.car.y <= sz.yStart && state.car.y >= sz.yEnd && state.car.speed > sz.limit) {
+          state.car.speed = sz.limit;
+        }
+      });
+    }
+    // 停车线前操作错误（如红灯时试图进等待区、车道不匹配）：原地停车等待
+    state.car.stopped = true;
     transition('playing');
-    checkLevelComplete();
+    return;
   });
 
+  const keysDown = new Set();
   document.addEventListener('keydown', function(e){
+    keysDown.add(e.code);
     if (e.code === 'Escape') {
       if (state.mode === 'paused') transition('playing');
       else if (state.mode === 'playing' || state.mode === 'awaiting-decision') transition('paused');
     }
-    const map = { 'Space':'stop','ArrowUp':'pass-through','ArrowDown':'stop','ArrowLeft':'left-turn','ArrowRight':'right-turn' };
+    // 限速关卡：ArrowUp 在决策模式仍为直行，在游玩模式为加速
+    if (e.code === 'ArrowUp') {
+      if (state.mode === 'awaiting-decision' || !state.car || !state.car.speedControlEnabled) {
+        handleAction('pass-through');
+      }
+      e.preventDefault();
+      return;
+    }
+    // 限速关卡：ArrowDown 在决策模式为停车，在游玩模式为减速
+    if (e.code === 'ArrowDown') {
+      if (state.mode === 'awaiting-decision' || !state.car || !state.car.speedControlEnabled) {
+        handleAction('stop');
+      }
+      e.preventDefault();
+      return;
+    }
+    const map = { 'Space':'stop','ArrowLeft':'left-turn','ArrowRight':'right-turn','KeyA':'lane-left','KeyD':'lane-right','KeyU':'u-turn' };
     const action = map[e.code];
     if (action) { e.preventDefault(); handleAction(action); }
+  });
+  document.addEventListener('keyup', function(e){
+    keysDown.delete(e.code);
   });
 
   // ===== START SCREEN / LEVEL COMPLETE / LEVEL FAIL / TOUCH =====
@@ -861,11 +4324,23 @@
     const container = document.getElementById('ss-levels');
     container.innerHTML = '';
     LEVELS.forEach(function(lv, idx){
-      const unlocked = idx < state.unlockedLevels;
       const btn = document.createElement('button');
-      btn.textContent = lv.title.split('·')[0].trim();
-      btn.style.cssText = 'padding:12px 8px;border-radius:8px;border:none;cursor:'+(unlocked?'pointer':'not-allowed')+';background:'+(unlocked?'#fff':'#555')+';color:'+(unlocked?'#222':'#999')+';font-size:13px;';
-      btn.disabled = !unlocked;
+      btn.style.cssText = 'padding:10px 8px;border-radius:10px;border:none;cursor:pointer;background:#fff;color:#222;font-size:14px;display:flex;flex-direction:column;align-items:center;gap:4px;min-height:60px;box-shadow:0 1px 3px rgba(0,0,0,0.2);';
+      var titleSpan = document.createElement('span');
+      titleSpan.textContent = lv.title.split('·')[0].trim();
+      titleSpan.style.fontWeight = 'bold';
+      btn.appendChild(titleSpan);
+      if (lv.tags && lv.tags.length > 0) {
+        var tagWrap = document.createElement('span');
+        tagWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:2px;justify-content:center;';
+        lv.tags.forEach(function(t){
+          var chip = document.createElement('span');
+          chip.textContent = t;
+          chip.style.cssText = 'font-size:11px;padding:2px 5px;border-radius:4px;background:#e8f0fe;color:#1a73e8;';
+          tagWrap.appendChild(chip);
+        });
+        btn.appendChild(tagWrap);
+      }
       btn.addEventListener('click', function(){
         state.levelIdx = idx;
         transition('playing');
@@ -935,7 +4410,7 @@
 
   // ===== EXPOSE =====
   window.game = { state, transition };
-  window.game.__test = { levels: LEVELS, validateLevel, loadLevel, evaluateDecision, applyDeduct, checkPass, EXPLANATIONS, handleAction };
+  window.game.__test = { levels: LEVELS, validateLevel, loadLevel, evaluateDecision, applyDeduct, checkPass, EXPLANATIONS, handleAction, isLaneCorrectForAction };
 
   requestAnimationFrame(loop);
 })();
